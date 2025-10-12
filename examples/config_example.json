@@ -1,0 +1,25 @@
+{
+    "strategy": {
+        "target_gamma": 0.0,
+        "gamma_tolerance": 0.15,
+        "delta_tolerance": 0.1,
+        "rebalance_frequency": 1800
+    },
+    "risk": {
+        "max_portfolio_delta": 2.0,
+        "max_portfolio_gamma": 1.0,
+        "max_position_size": 50.0,
+        "max_notional_exposure": 500000.0,
+        "var_confidence": 0.95
+    },
+    "trading": {
+        "risk_free_rate": 0.0,
+        "transaction_cost": 0.0005,
+        "min_rebalance_threshold": 0.1
+    },
+    "market": {
+        "default_volatility": 0.8,
+        "volatility_floor": 0.2,
+        "volatility_cap": 2.5
+    }
+}
