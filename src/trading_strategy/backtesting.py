@@ -9,7 +9,7 @@ from .indicators import calculate_indicator_and_signals, combine_indicator_signa
 
 
 def backtest_strategy(df, indicator, params, position_type='long', indicators_combo=None, 
-                      combination_method='AND'):
+                      combination_method='AND', initial_capital=10000.0):
     """
     Backtest de estrategia de trading con cálculo de métricas
     
@@ -35,6 +35,9 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
     combination_method : str
         Método de combinación si indicators_combo es usado
         Opciones: 'AND', 'OR', 'MAJORITY', 'WEIGHTED', 'UNANIMOUS_LONG', 'UNANIMOUS_SHORT'
+    initial_capital : float
+        Capital inicial para calcular métricas nominales (USD)
+        Default: 10000.0
     
     Returns:
     --------
@@ -131,6 +134,25 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
     downside_std = downside_returns.std() if len(downside_returns) > 0 else returns.std()
     sortino = returns.mean() / downside_std if downside_std > 0 else 0
     
+    # --- Métricas Nominales (USD) ---
+    equity_curve = initial_capital * cumulative_returns
+    final_equity = equity_curve.iloc[-1]
+    net_profit_usd = final_equity - initial_capital
+    
+    # Max Drawdown Nominal (Peak - Valley en $)
+    running_max_equity = equity_curve.expanding().max()
+    drawdown_usd = running_max_equity - equity_curve
+    max_drawdown_usd = drawdown_usd.max()
+    
+    # PnL por Trade en USD (considerando interés compuesto)
+    capital_before_trade = pd.Series(initial_capital, index=returns.index)
+    if len(returns) > 1:
+        # El capital antes del trade i es el equity del trade i-1
+        capital_before_trade.iloc[1:] = equity_curve.iloc[:-1].values
+        
+    trade_pnls_usd = returns * capital_before_trade
+    avg_trade_usd = trade_pnls_usd.mean()
+    
     metrics = {
         'total_return': float(total_return),
         'n_trades': int(n_trades),
@@ -147,7 +169,13 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
         'best_trade': float(returns.max()),
         'worst_trade': float(returns.min()),
         'avg_return_per_trade': float(returns.mean()),
-        'volatility': float(returns.std())
+        'volatility': float(returns.std()),
+        
+        # Métricas Nominales
+        'net_profit_usd': float(net_profit_usd),
+        'final_equity': float(final_equity),
+        'max_drawdown_usd': float(max_drawdown_usd),
+        'avg_trade_usd': float(avg_trade_usd)
     }
     
     return metrics
