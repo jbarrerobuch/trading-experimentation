@@ -1,0 +1,151 @@
+"""
+Utilidades generales
+Funciones helper para el framework de trading
+"""
+
+import pandas as pd
+import numpy as np
+
+
+def calculate_returns_summary(df, returns_column='returns'):
+    """
+    Calcula resumen estadístico de retornos
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        DataFrame con columna de retornos
+    returns_column : str
+        Nombre de la columna de retornos
+    
+    Returns:
+    --------
+    dict : Diccionario con estadísticas
+    """
+    returns = df[returns_column].dropna()
+    
+    summary = {
+        'mean': returns.mean(),
+        'std': returns.std(),
+        'min': returns.min(),
+        'max': returns.max(),
+        'skew': returns.skew(),
+        'kurtosis': returns.kurtosis(),
+        'sharpe': returns.mean() / returns.std() if returns.std() > 0 else 0,
+        'positive_days': (returns > 0).sum(),
+        'negative_days': (returns < 0).sum(),
+        'total_days': len(returns)
+    }
+    
+    return summary
+
+
+def normalize_ohlcv_columns(df):
+    """
+    Normaliza nombres de columnas OHLCV a formato estándar
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        DataFrame con columnas OHLCV en cualquier formato
+    
+    Returns:
+    --------
+    DataFrame con columnas normalizadas
+    """
+    df = df.copy()
+    
+    column_mapping = {}
+    for col in df.columns:
+        col_lower = col.lower()
+        if col_lower in ['open', 'high', 'low', 'close', 'volume']:
+            column_mapping[col] = col_lower.capitalize()
+    
+    df.rename(columns=column_mapping, inplace=True)
+    
+    return df
+
+
+def resample_ohlcv(df, timeframe='1D'):
+    """
+    Resamplea datos OHLCV a un timeframe diferente
+    
+    Parameters:
+    -----------
+    df : DataFrame
+        DataFrame con datos OHLCV (index = timestamp)
+    timeframe : str
+        Timeframe objetivo ('1h', '4h', '1D', etc.)
+    
+    Returns:
+    --------
+    DataFrame resampled
+    """
+    df = df.copy()
+    
+    resampled = df.resample(timeframe).agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }).dropna()
+    
+    return resampled
+
+
+def calculate_trade_statistics(trades_df):
+    """
+    Calcula estadísticas detalladas de trades
+    
+    Parameters:
+    -----------
+    trades_df : DataFrame
+        DataFrame con columna 'returns' de cada trade
+    
+    Returns:
+    --------
+    dict : Diccionario con estadísticas de trading
+    """
+    returns = trades_df['returns']
+    
+    wins = returns[returns > 0]
+    losses = returns[returns < 0]
+    
+    stats = {
+        'total_trades': len(returns),
+        'winning_trades': len(wins),
+        'losing_trades': len(losses),
+        'win_rate': len(wins) / len(returns) if len(returns) > 0 else 0,
+        'avg_win': wins.mean() if len(wins) > 0 else 0,
+        'avg_loss': losses.mean() if len(losses) > 0 else 0,
+        'largest_win': wins.max() if len(wins) > 0 else 0,
+        'largest_loss': losses.min() if len(losses) > 0 else 0,
+        'profit_factor': wins.sum() / abs(losses.sum()) if len(losses) > 0 and losses.sum() != 0 else 0,
+        'risk_reward': abs(wins.mean() / losses.mean()) if len(losses) > 0 and losses.mean() != 0 else 0,
+        'total_return': returns.sum(),
+        'avg_return': returns.mean()
+    }
+    
+    return stats
+
+
+def format_strategy_config(strategy_name, indicator, params):
+    """
+    Formatea configuración de estrategia para display
+    
+    Parameters:
+    -----------
+    strategy_name : str
+        Nombre de la estrategia
+    indicator : str
+        Nombre del indicador
+    params : dict
+        Parámetros del indicador
+    
+    Returns:
+    --------
+    str : String formateado
+    """
+    params_str = ', '.join([f"{k}={v}" for k, v in params.items()])
+    return f"{strategy_name} ({indicator}: {params_str})"

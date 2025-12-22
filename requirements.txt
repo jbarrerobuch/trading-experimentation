@@ -1,0 +1,27 @@
+# Core Data Analysis
+pandas
+numpy
+scipy
+statsmodels
+
+# Data Acquisition
+ccxt
+yfinance
+
+# Visualization
+matplotlib
+seaborn
+
+# Jupyter Notebook
+ipykernel
+ipython
+jupyter_client
+
+# Technical Analysis
+pandas-ta
+
+# Machine Learning & Experiment Tracking
+mlflow
+
+# Utilities
+python-dateutil

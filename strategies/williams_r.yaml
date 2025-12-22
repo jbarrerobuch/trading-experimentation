@@ -1,0 +1,12 @@
+# Estrategia Williams %R
+# Oscilador de momentum para identificar condiciones de sobrecompra/sobreventa
+
+name: Williams_R
+type: individual
+indicator: willr
+
+params_grid:
+  period: [14, 20]
+  high_threshold: [-20]
+  low_threshold: [-80]
+  position_type: [both, long]

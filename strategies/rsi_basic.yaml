@@ -1,0 +1,12 @@
+# Estrategia de optimización RSI
+# Prueba diferentes períodos y niveles de sobrecompra/sobreventa
+
+name: RSI_Basic
+type: individual
+indicator: rsi
+
+params_grid:
+  period: [14]
+  overbought: [70]
+  oversold: [30]
+  position_type: [both]
