@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from src.trading_strategy import (
     load_saved_data,
-    load_all_strategies,
+    load_strategies_by_name,
     batch_grid_search,
     estimate_batch_requirements,
     calculate_returns_and_momentum
@@ -19,12 +19,17 @@ from src.trading_strategy import (
 def main():
     # ========== 1. CARGAR DATOS ==========
     print("📥 Cargando datos...")
-    df = load_saved_data(
+    # Cargar datos guardados
+    data = load_saved_data(
         ticker='BTCUSDT',
-        timeframe='1h',
-        start_date='2017-08-18',
-        end_date='2025-11-11'
+        timeframes=['1h']
     )
+    
+    if not data or '1h' not in data:
+        print("❌ No se encontraron datos para BTCUSDT 1h")
+        return
+
+    df = data['1h']
     
     print(f"✓ Datos cargados: {len(df)} velas")
     print(f"  Periodo: {df.index[0]} - {df.index[-1]}")
@@ -33,17 +38,25 @@ def main():
     print("\n📊 Calculando retornos e indicadores base...")
     # compute_indicators=False para solo calcular retornos y future_ret+N
     # Esto optimiza el grid search evitando recálculos
-    df = calculate_returns_and_momentum(df, compute_indicators=False)
+    df = calculate_returns_and_momentum(
+        df,
+        compute_indicators=False,
+        lookforward_periods=[1]
+    )
     print("✓ Retornos pre-calculados")
     
     # ========== 2. CARGAR ESTRATEGIAS ==========
     print("\n📋 Cargando configuraciones de estrategias...")
     
-    # Opción A: Cargar todas las estrategias
-    configs = load_all_strategies()
-    
-    # Opción B: Cargar solo algunas
-    # configs = load_strategies_by_name(['rsi_optimization', 'macd_optimization'])
+    # Cargar estrategias específicas
+    # Puedes agregar más nombres de archivos (sin .yaml) a esta lista
+    strategy_names = [
+        'rsi_optimization',
+        'macd_optimization',
+        'williams_r',
+        'rsi_macd_combo'
+    ]
+    configs = load_strategies_by_name(strategy_names)
     
     print(f"✓ {len(configs)} configuraciones cargadas")
     
@@ -59,6 +72,11 @@ def main():
     
     # ========== 4. EJECUTAR BATCH GRID SEARCH ==========
     print("\n" + "="*80)
+    
+    # Definir directorio temporal para checkpoints
+    checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_checkpoints')
+    print(f"📂 Checkpoints se guardarán en: {checkpoint_dir}")
+    
     input("⏸️  Presiona ENTER para iniciar batch grid search (o Ctrl+C para cancelar)...")
     
     results = batch_grid_search(
@@ -68,8 +86,9 @@ def main():
         use_mlflow=True,            # Registrar en MLflow
         ticker='BTCUSDT',
         timeframe='1h',
-        experiment_name='btc_1h_batch_test',
-        save_checkpoints=True       # Guardar checkpoints intermedios
+        experiment_name='btc_1h_multiindicator',
+        save_checkpoints=True,      # Guardar checkpoints intermedios
+        checkpoint_dir=checkpoint_dir
     )
     
     # ========== 5. ANALIZAR RESULTADOS ==========

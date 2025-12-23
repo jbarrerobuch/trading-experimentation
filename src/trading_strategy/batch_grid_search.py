@@ -4,10 +4,13 @@ Optimiza memoria y permite checkpoints para experimentos grandes
 """
 
 import time
+import os
 import datetime
 import pandas as pd
+from pathlib import Path
 from itertools import product, islice
 from .grid_search import strategy_grid_search
+from .utils.paths import get_project_root
 
 
 def batched(iterable, n):
@@ -105,7 +108,8 @@ def create_batch_configs(strategy_config, batch_size):
 
 def batch_grid_search(df, strategy_configs, batch_size=10000, 
                      use_mlflow=True, ticker='BTCUSDT', timeframe='1h',
-                     experiment_name='default', save_checkpoints=True):
+                     experiment_name='default', save_checkpoints=True,
+                     checkpoint_dir=None):
     """
     Grid Search con división automática en batches
     Optimiza memoria y permite recuperación ante fallos
@@ -131,6 +135,9 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     save_checkpoints : bool
         Si True, guarda resultados intermedios en CSV
         Default: True
+    checkpoint_dir : str or Path, optional
+        Directorio donde guardar los checkpoints.
+        Si es None, usa 'checkpoints/' en el root del proyecto.
         
     Returns:
     --------
@@ -154,6 +161,16 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     # ID único para esta sesión de batches
     session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"Session ID: {session_id}")
+    
+    # Configurar directorio de checkpoints
+    if save_checkpoints:
+        if checkpoint_dir is None:
+            checkpoint_dir = get_project_root() / 'checkpoints'
+        else:
+            checkpoint_dir = Path(checkpoint_dir)
+            
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        print(f"📂 Directorio de checkpoints: {checkpoint_dir}")
     
     # Dividir cada estrategia en batches
     all_batch_configs = []
@@ -212,7 +229,8 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
                 
                 # Guardar checkpoint
                 if save_checkpoints:
-                    checkpoint_file = f"checkpoint_{experiment_name}_{session_id}_batch{batch_idx}.csv"
+                    filename = f"checkpoint_{experiment_name}_{session_id}_batch{batch_idx}.csv"
+                    checkpoint_file = checkpoint_dir / filename # pyright: ignore[reportOptionalOperand]
                     batch_results.to_csv(checkpoint_file, index=False)
                     print(f"  💾 Checkpoint guardado: {checkpoint_file}")
             

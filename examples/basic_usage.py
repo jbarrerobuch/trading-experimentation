@@ -61,11 +61,10 @@ def main():
     print("\n📂 PASO 3: Cargando estrategias desde archivos YAML...")
     
     configs = load_strategies_by_name([
-        'rsi_basic',
-        #'rsi_optimization',
-        #'macd_optimization',
-        #'williams_r',
-        #'rsi_macd_combo'
+        'rsi_optimization',
+        'macd_optimization',
+        'williams_r',
+        'rsi_macd_combo'
     ])
     
     if not configs:
@@ -81,8 +80,8 @@ def main():
         use_mlflow=True,
         ticker='BTCUSDT',
         timeframe='1h',
-        experiment_name='RSI_basic',
-        commission=0.001,  # 0.1%
+        experiment_name='multistrategy_optimization',
+        commission=0.00025,  # 0.025%
         slippage=0.0001,   # 0.01%
         use_next_open=True,
         train_split_ratio=0.7 # 70% Train, 30% Test
