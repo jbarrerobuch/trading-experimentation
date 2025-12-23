@@ -5,12 +5,20 @@ Ejecuta backtests de estrategias y calcula métricas de performance
 
 import numpy as np
 import pandas as pd
+from typing import Dict, List, Optional, Union, Any
 from .indicators import calculate_indicator_and_signals, combine_indicator_signals
 from .constants import COL_SIGNAL, COL_RETURNS, COL_FUTURE_RET
 
 
-def backtest_strategy(df, indicator, params, position_type='long', indicators_combo=None, 
-                      combination_method='AND', initial_capital=10000.0):
+def backtest_strategy(
+    df: pd.DataFrame, 
+    indicator: Optional[str], 
+    params: Dict[str, Any], 
+    position_type: str = 'long', 
+    indicators_combo: Optional[List[Dict[str, Any]]] = None, 
+    combination_method: str = 'AND', 
+    initial_capital: float = 10000.0
+) -> Optional[Dict[str, float]]:
     """
     Backtest de estrategia de trading con cálculo de métricas
     
@@ -50,9 +58,12 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
         df = combine_indicator_signals(df, indicators_combo, combination_method, inplace=True)
     else:
         # Estrategia de indicador individual
+        if indicator is None:
+             return None
         df = calculate_indicator_and_signals(df, indicator, params, inplace=True)
     
     if COL_SIGNAL not in df.columns or df[COL_SIGNAL].isna().all():
+        # print("Debug: No signal column or all NaN")
         return None
     
     # future_ret ya está precalculado por calculate_returns_and_momentum()
@@ -87,6 +98,7 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
     
     if len(adjusted_returns) < 10:
         # Liberar memoria antes de retornar
+        # print(f"Debug: Not enough trades ({len(adjusted_returns)} < 10)")
         del signal_array, future_ret_array, mask, adjusted_returns
         return None
     

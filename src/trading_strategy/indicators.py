@@ -9,18 +9,25 @@ import pandas_ta as ta
 from functools import lru_cache
 import hashlib
 from collections import OrderedDict
+from typing import List, Dict, Optional, Union, Any
 from .constants import (
     COL_OPEN, COL_HIGH, COL_LOW, COL_CLOSE, COL_VOLUME,
-    COL_RETURNS, COL_LOG_RETURNS, COL_CANDLE_RTN, COL_FUTURE_RET
+    COL_RETURNS, COL_LOG_RETURNS, COL_CANDLE_RTN, COL_FUTURE_RET,
+    COL_SIGNAL
 )
 
 
 # Cache global para indicadores calculados con límite LRU
-_INDICATOR_CACHE = OrderedDict()
+_INDICATOR_CACHE: OrderedDict = OrderedDict()
 _CACHE_MAX_SIZE = 256  # Límite de entradas en cache
 
 
-def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], lookforward_periods=[2, 5, 10, 15, 20, 30, 60, 120], compute_indicators=True):
+def calculate_returns_and_momentum(
+    df: pd.DataFrame, 
+    lookback_periods: List[int] = [5, 10, 20, 30, 60], 
+    lookforward_periods: List[int] = [2, 5, 10, 15, 20, 30, 60, 120], 
+    compute_indicators: bool = True
+) -> pd.DataFrame:
     """
     Calcula retornos y opcionalmente 36 indicadores técnicos usando pandas-ta
     
@@ -199,7 +206,7 @@ def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], loo
     return df.dropna(subset=['returns', 'log_returns'])
 
 
-def _get_cache_key(df, indicator, params):
+def _get_cache_key(df: pd.DataFrame, indicator: str, params: Dict[str, Any]) -> str:
     """
     Genera una clave única para el cache basada en el DataFrame y parámetros
     
@@ -222,13 +229,19 @@ def _get_cache_key(df, indicator, params):
     return f"{df_hash}_{indicator}_{params_str}"
 
 
-def clear_indicator_cache():
+def clear_indicator_cache() -> None:
     """Limpia el cache de indicadores (útil entre diferentes tickers/timeframes)"""
     global _INDICATOR_CACHE
     _INDICATOR_CACHE.clear()
 
 
-def calculate_indicator_and_signals(df, indicator, params, inplace=False, use_cache=True):
+def calculate_indicator_and_signals(
+    df: pd.DataFrame, 
+    indicator: str, 
+    params: Dict[str, Any], 
+    inplace: bool = False, 
+    use_cache: bool = True
+) -> pd.DataFrame:
     """
     Calcula un indicador específico con parámetros personalizados y genera señales
     
@@ -377,7 +390,12 @@ def calculate_indicator_and_signals(df, indicator, params, inplace=False, use_ca
     return df
 
 
-def combine_indicator_signals(df, indicators_configs, combination_method='AND', inplace=False):
+def combine_indicator_signals(
+    df: pd.DataFrame, 
+    indicators_configs: List[Dict[str, Any]], 
+    combination_method: str = 'AND', 
+    inplace: bool = False
+) -> pd.DataFrame:
     """
     Combina señales de múltiples indicadores usando diferentes métodos
     
