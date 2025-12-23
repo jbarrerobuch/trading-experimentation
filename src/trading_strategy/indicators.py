@@ -9,6 +9,10 @@ import pandas_ta as ta
 from functools import lru_cache
 import hashlib
 from collections import OrderedDict
+from .constants import (
+    COL_OPEN, COL_HIGH, COL_LOW, COL_CLOSE, COL_VOLUME,
+    COL_RETURNS, COL_LOG_RETURNS, COL_CANDLE_RTN, COL_FUTURE_RET
+)
 
 
 # Cache global para indicadores calculados con límite LRU
@@ -38,26 +42,23 @@ def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], loo
     """
     df = df.copy()
     
-    # Normalizar nombres de columnas UNA VEZ (optimización)
-    df.columns = [col.capitalize() if col.lower() in ['open', 'high', 'low', 'close', 'volume'] else col for col in df.columns]
-    
     #  ========== RETORNOS BÁSICOS (siempre se calculan) ==========
-    df['returns'] = df['Close'].pct_change()
-    df['log_returns'] = np.log(df['Close'] / df['Close'].shift(1))
-    df['candle_rtn'] = (df['Close'] - df['Open']) / df['Open']
+    df[COL_RETURNS] = df[COL_CLOSE].pct_change()
+    df[COL_LOG_RETURNS] = np.log(df[COL_CLOSE] / df[COL_CLOSE].shift(1))
+    df[COL_CANDLE_RTN] = (df[COL_CLOSE] - df[COL_OPEN]) / df[COL_OPEN]
     
     # Pre-calcular future_ret UNA VEZ (optimización para backtesting)
     # future_ret+N: Retorno acumulado a N periodos en el futuro
     # future_ret+1 es equivalente al antiguo future_ret
-    df['future_ret+1'] = df['returns'].shift(-1)
+    df[f'{COL_FUTURE_RET}+1'] = df[COL_RETURNS].shift(-1)
     
     # Calcular retornos futuros para diferentes horizontes
     for period in lookforward_periods:
-        df[f'future_ret+{period}'] = df['Close'].shift(-period) / df['Close'] - 1
+        df[f'{COL_FUTURE_RET}+{period}'] = df[COL_CLOSE].shift(-period) / df[COL_CLOSE] - 1
     
     # Si solo queremos retornos (para grid search), retornar aquí
     if not compute_indicators:
-        return df.dropna(subset=['returns', 'log_returns'])
+        return df.dropna(subset=[COL_RETURNS, COL_LOG_RETURNS])
     
     # ========== INDICADORES TÉCNICOS (36 indicadores con pandas-ta) ==========
     # La lógica completa se mantiene en el notebook para edición interactiva
@@ -66,18 +67,18 @@ def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], loo
     # 1-3. Momentum clásico
     for period in [5, 10, 14, 20, 30]:
         if period in lookback_periods or period in [10, 14, 20]:
-            df[f'rsi_{period}'] = ta.rsi(df['Close'], length=period)
+            df[f'rsi_{period}'] = ta.rsi(df[COL_CLOSE], length=period)
             df[f'rsi_signal_{period}'] = np.where(df[f'rsi_{period}'] > 70, -1,
                                                   np.where(df[f'rsi_{period}'] < 30, 1, 0))
             
-            df[f'roc_{period}'] = ta.roc(df['Close'], length=period)
+            df[f'roc_{period}'] = ta.roc(df[COL_CLOSE], length=period)
             df[f'roc_signal_{period}'] = np.sign(df[f'roc_{period}'])
             
-            df[f'mom_{period}'] = ta.mom(df['Close'], length=period)
+            df[f'mom_{period}'] = ta.mom(df[COL_CLOSE], length=period)
             df[f'mom_signal_{period}'] = np.sign(df[f'mom_{period}'])
     
     # 4. MACD
-    macd_result = ta.macd(df['Close'], fast=12, slow=26, signal=9)
+    macd_result = ta.macd(df[COL_CLOSE], fast=12, slow=26, signal=9)
     if macd_result is not None:
         df['macd'] = macd_result['MACD_12_26_9']
         df['macd_signal_line'] = macd_result['MACDs_12_26_9']
@@ -85,7 +86,7 @@ def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], loo
         df['macd_signal'] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
     
     # 5. Stochastic
-    stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=14, d=3)
+    stoch = ta.stoch(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], k=14, d=3)
     if stoch is not None:
         df['stoch_k'] = stoch['STOCHk_14_3_3']
         df['stoch_d'] = stoch['STOCHd_14_3_3']
@@ -94,7 +95,7 @@ def calculate_returns_and_momentum(df, lookback_periods=[5, 10, 20, 30, 60], loo
     # 6. CCI
     for period in [20, 30]:
         if period in lookback_periods or period == 20:
-            df[f'cci_{period}'] = ta.cci(df['High'], df['Low'], df['Close'], length=period)
+            df[f'cci_{period}'] = ta.cci(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
             df[f'cci_signal_{period}'] = np.where(df[f'cci_{period}'] > 0, 1, -1)
     
     # 7. Williams %R
@@ -284,63 +285,63 @@ def calculate_indicator_and_signals(df, indicator, params, inplace=False, use_ca
         overbought = params.get('overbought', 70)
         oversold = params.get('oversold', 30)
         
-        df['indicator_value'] = ta.rsi(df['Close'], length=period)
-        df['signal'] = np.where(df['indicator_value'] > overbought, -1,
+        df['indicator_value'] = ta.rsi(df[COL_CLOSE], length=period)
+        df[COL_SIGNAL] = np.where(df['indicator_value'] > overbought, -1,
                                np.where(df['indicator_value'] < oversold, 1, 0))
         
         # Guardar en cache
         if use_cache:
             calculated_columns['indicator_value'] = df['indicator_value'].copy()
-            calculated_columns['signal'] = df['signal'].copy()
+            calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
     
     elif indicator == 'macd':
         fast = params.get('fast', 12)
         slow = params.get('slow', 26)
         signal_period = params.get('signal', 9)
         
-        macd_result = ta.macd(df['Close'], fast=fast, slow=slow, signal=signal_period)
+        macd_result = ta.macd(df[COL_CLOSE], fast=fast, slow=slow, signal=signal_period)
         if macd_result is not None:
             df['macd'] = macd_result[f'MACD_{fast}_{slow}_{signal_period}']
             df['macd_signal_line'] = macd_result[f'MACDs_{fast}_{slow}_{signal_period}']
-            df['signal'] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
+            df[COL_SIGNAL] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
             
             # Guardar en cache
             if use_cache:
                 calculated_columns['macd'] = df['macd'].copy()
                 calculated_columns['macd_signal_line'] = df['macd_signal_line'].copy()
-                calculated_columns['signal'] = df['signal'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
         else:
-            df['signal'] = 0
+            df[COL_SIGNAL] = 0
     
     elif indicator == 'willr':
         period = params.get('period', 14)
         high_threshold = params.get('high_threshold', -20)
         low_threshold = params.get('low_threshold', -80)
         
-        willr = ta.willr(df['High'], df['Low'], df['Close'], length=period)
+        willr = ta.willr(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
         if willr is not None:
             df['indicator_value'] = willr
-            df['signal'] = np.where(df['indicator_value'] > high_threshold, -1,
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > high_threshold, -1,
                                    np.where(df['indicator_value'] < low_threshold, 1, 0))
             
             # Guardar en cache
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
-                calculated_columns['signal'] = df['signal'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
         else:
-            df['signal'] = 0
+            df[COL_SIGNAL] = 0
     
     elif indicator == 'adx':
         period = params.get('period', 14)
         threshold = params.get('threshold', 25)
         
-        adx_result = ta.adx(df['High'], df['Low'], df['Close'], length=period)
+        adx_result = ta.adx(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
         if adx_result is not None:
             df['adx'] = adx_result[f'ADX_{period}']
             df['adx_plus'] = adx_result[f'DMP_{period}']
             df['adx_minus'] = adx_result[f'DMN_{period}']
             # Signal solo cuando ADX > threshold (tendencia fuerte)
-            df['signal'] = np.where((df['adx'] > threshold) & (df['adx_plus'] > df['adx_minus']), 1,
+            df[COL_SIGNAL] = np.where((df['adx'] > threshold) & (df['adx_plus'] > df['adx_minus']), 1,
                                    np.where((df['adx'] > threshold) & (df['adx_plus'] < df['adx_minus']), -1, 0))
             
             # Guardar en cache
@@ -348,23 +349,23 @@ def calculate_indicator_and_signals(df, indicator, params, inplace=False, use_ca
                 calculated_columns['adx'] = df['adx'].copy()
                 calculated_columns['adx_plus'] = df['adx_plus'].copy()
                 calculated_columns['adx_minus'] = df['adx_minus'].copy()
-                calculated_columns['signal'] = df['signal'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
         else:
-            df['signal'] = 0
+            df[COL_SIGNAL] = 0
     
     # ... más indicadores (ver notebook para implementación completa)
     else:
         # Indicador no implementado, retornar señal neutral
-        df['signal'] = 0
+        df[COL_SIGNAL] = 0
     
     # Rellenar NaN con 0 en la columna signal
-    df['signal'] = df['signal'].fillna(0)
+    df[COL_SIGNAL] = df[COL_SIGNAL].fillna(0)
     
     # Guardar en cache si hay datos calculados
     if use_cache and cache_key and calculated_columns:
         # Agregar signal al cache si no se agregó antes
-        if 'signal' not in calculated_columns:
-            calculated_columns['signal'] = df['signal'].copy()
+        if COL_SIGNAL not in calculated_columns:
+            calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
         
         # Implementar LRU: eliminar entrada más antigua si se alcanza el límite
         if len(_INDICATOR_CACHE) >= _CACHE_MAX_SIZE:
@@ -422,30 +423,30 @@ def combine_indicator_signals(df, indicators_configs, combination_method='AND', 
         # Calcular indicador y señal (ahora retorna el df completo)
         # use_cache=True para reutilizar cálculos en estrategias combo
         signal_df = calculate_indicator_and_signals(df, indicator_name, params, inplace=False, use_cache=True)
-        signals_list.append(signal_df['signal'])
+        signals_list.append(signal_df[COL_SIGNAL])
         weights.append(weight)
     
     # Combinar señales según método
     signals_matrix = pd.concat(signals_list, axis=1)
-    signals_matrix.columns = [f'signal_{i}' for i in range(len(signals_list))]
+    signals_matrix.columns = [f'{COL_SIGNAL}_{i}' for i in range(len(signals_list))]
     
     if combination_method == 'AND':
         # Todos deben estar de acuerdo
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: row.iloc[0] if (row == row.iloc[0]).all() else 0,
             axis=1
         )
     
     elif combination_method == 'OR':
         # Al menos uno da señal
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: 1 if (row == 1).any() else (-1 if (row == -1).any() else 0),
             axis=1
         )
     
     elif combination_method == 'MAJORITY':
         # Mayoría simple
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: 1 if (row == 1).sum() > len(row)/2 else (-1 if (row == -1).sum() > len(row)/2 else 0),
             axis=1
         )
@@ -453,28 +454,28 @@ def combine_indicator_signals(df, indicators_configs, combination_method='AND', 
     elif combination_method == 'WEIGHTED':
         # Promedio ponderado
         weights_array = np.array(weights)
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: np.dot(row.values, weights_array) / weights_array.sum(),
             axis=1
         )
         # Convertir a señales discretas
-        df['signal'] = np.where(df['signal'] > 0.3, 1, np.where(df['signal'] < -0.3, -1, 0))
+        df[COL_SIGNAL] = np.where(df[COL_SIGNAL] > 0.3, 1, np.where(df[COL_SIGNAL] < -0.3, -1, 0))
     
     elif combination_method == 'UNANIMOUS_LONG':
         # Long solo si todos = 1
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: 1 if (row == 1).all() else 0,
             axis=1
         )
     
     elif combination_method == 'UNANIMOUS_SHORT':
         # Short solo si todos = -1
-        df['signal'] = signals_matrix.apply(
+        df[COL_SIGNAL] = signals_matrix.apply(
             lambda row: -1 if (row == -1).all() else 0,
             axis=1
         )
     
     # Rellenar NaN con 0 en la columna signal
-    df['signal'] = df['signal'].fillna(0)
+    df[COL_SIGNAL] = df[COL_SIGNAL].fillna(0)
     
     return df

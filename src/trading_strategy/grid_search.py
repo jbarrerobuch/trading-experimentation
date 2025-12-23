@@ -68,12 +68,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
     # Configurar MLflow
     if use_mlflow and MLFLOW_AVAILABLE:
         try:
-            import os
-            # Obtener path absoluto del proyecto (asumiendo que grid_search.py está en src/trading_strategy/)
-            module_dir = os.path.dirname(os.path.abspath(__file__))
-            src_dir = os.path.dirname(module_dir)
-            project_root = os.path.dirname(src_dir)
-            mlruns_path = os.path.join(project_root, 'mlruns')
+            from .utils.paths import get_mlruns_dir
+            mlruns_path = get_mlruns_dir()
             
             mlflow.set_tracking_uri(f"file:{mlruns_path}")
             mlflow.set_experiment(experiment_name)

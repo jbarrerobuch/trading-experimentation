@@ -8,6 +8,11 @@ import glob
 import ccxt
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
+from .constants import (
+    COL_TIMESTAMP, COL_OPEN, COL_HIGH, COL_LOW, COL_CLOSE, COL_VOLUME
+)
+from .utils.paths import get_market_data_dir
 
 
 def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-17', save_data=True):
@@ -23,7 +28,7 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
     start_date : str
         Fecha de inicio en formato 'YYYY-MM-DD'
     save_data : bool
-        Si True, guarda los datos en formato Parquet en ../data/market
+        Si True, guarda los datos en formato Parquet en data/market
     
     Returns:
     --------
@@ -50,7 +55,7 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
     }
     
     data = {}
-    market_dir = '../data/market'
+    market_dir = get_market_data_dir()
     os.makedirs(market_dir, exist_ok=True)
     
     ticker_clean = ticker.replace('/', '').replace('-', '').lower()
@@ -87,15 +92,15 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
             # Convertir a DataFrame
             df = pd.DataFrame(
                 all_ohlcv,
-                columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume']
+                columns=[COL_TIMESTAMP, COL_OPEN, COL_HIGH, COL_LOW, COL_CLOSE, COL_VOLUME]
             )
             
             # Convertir timestamp a datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
+            df[COL_TIMESTAMP] = pd.to_datetime(df[COL_TIMESTAMP], unit='ms')
+            df.set_index(COL_TIMESTAMP, inplace=True)
             
             # Asegurar que los datos sean numéricos
-            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            for col in [COL_OPEN, COL_HIGH, COL_LOW, COL_CLOSE, COL_VOLUME]:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
             # Eliminar duplicados y valores nulos
@@ -110,7 +115,7 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
                 date_start = df.index.min().strftime('%Y%m%d')
                 date_end = df.index.max().strftime('%Y%m%d')
                 parquet_filename = f'{ticker_clean}_{tf_name}_{date_start}_{date_end}.parquet'
-                parquet_filepath = os.path.join(market_dir, parquet_filename)
+                parquet_filepath = market_dir / parquet_filename
                 
                 df.to_parquet(parquet_filepath, compression='snappy', index=True)
                 print(f"    💾 Guardado: {parquet_filepath}")
@@ -130,7 +135,7 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
     return data
 
 
-def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path='../data/market'):
+def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path=None):
     """
     Carga datos guardados en formato Parquet desde el directorio especificado
     
@@ -140,9 +145,9 @@ def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path='../data/ma
         Símbolo del par en formato 'BTC/USDT', 'ETH/USDT', etc. o 'btcusdt'
     timeframes : list
         Lista de timeframes a cargar ['1h', '4h', '1d']
-    data_path : str
+    data_path : str or Path, optional
         Ruta al directorio donde se encuentran los archivos Parquet
-        Default: '../data/market'
+        Default: None (usa get_market_data_dir())
     
     Returns:
     --------
@@ -152,9 +157,13 @@ def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path='../data/ma
     
     # Nombre limpio del ticker
     ticker_clean = ticker.replace('/', '').replace('-', '').lower()
-    market_dir = data_path
     
-    if not os.path.exists(market_dir):
+    if data_path is None:
+        market_dir = get_market_data_dir()
+    else:
+        market_dir = Path(data_path)
+    
+    if not market_dir.exists():
         print(f"❌ Directorio {market_dir} no existe")
         return None
     
@@ -162,7 +171,7 @@ def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path='../data/ma
     
     for tf in timeframes:
         # Buscar el archivo más reciente para este ticker y timeframe
-        pattern = os.path.join(market_dir, f'{ticker_clean}_{tf}_*.parquet')
+        pattern = str(market_dir / f'{ticker_clean}_{tf}_*.parquet')
         files = glob.glob(pattern)
         
         if not files:
@@ -174,6 +183,15 @@ def load_saved_data(ticker, timeframes=['1h', '4h', '1d'], data_path='../data/ma
         
         try:
             df = pd.read_parquet(latest_file)
+            
+            # Ensure columns are normalized (in case loading old data)
+            # Map lowercase to Capitalized
+            rename_map = {
+                'open': COL_OPEN, 'high': COL_HIGH, 'low': COL_LOW, 
+                'close': COL_CLOSE, 'volume': COL_VOLUME
+            }
+            df.rename(columns=rename_map, inplace=True)
+            
             data[tf] = df
             print(f"  ✓ {tf}: {len(df)} velas ({df.index.min()} a {df.index.max()})")
         except Exception as e:

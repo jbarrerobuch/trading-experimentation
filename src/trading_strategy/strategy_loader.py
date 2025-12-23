@@ -56,27 +56,27 @@ def load_strategy_config(strategy_file):
         return None
 
 
-def load_all_strategies(strategies_dir='strategies'):
+def load_all_strategies(strategies_dir=None):
     """
     Carga todas las estrategias desde la carpeta strategies/
     
     Parameters:
     -----------
-    strategies_dir : str
+    strategies_dir : str or Path, optional
         Path al directorio con archivos YAML de estrategias
-        Default: 'strategies' (relativo al proyecto)
+        Default: None (usa get_strategies_dir())
     
     Returns:
     --------
     list : Lista de configuraciones de estrategias
     """
-    # Si es path relativo, construir desde el proyecto
-    if not os.path.isabs(strategies_dir):
-        # Asumiendo que este módulo está en src/trading_strategy/
-        module_dir = os.path.dirname(os.path.abspath(__file__))
-        src_dir = os.path.dirname(module_dir)
-        project_root = os.path.dirname(src_dir)
-        strategies_dir = os.path.join(project_root, strategies_dir)
+    from .utils.paths import get_strategies_dir, get_project_root
+    
+    if strategies_dir is None:
+        strategies_dir = get_strategies_dir()
+    elif not os.path.isabs(strategies_dir):
+        # Si es relativo, intentar resolverlo desde el root
+        strategies_dir = os.path.join(get_project_root(), strategies_dir)
     
     if not os.path.exists(strategies_dir):
         print(f"⚠️  Directorio de estrategias no existe: {strategies_dir}")
@@ -108,7 +108,7 @@ def load_all_strategies(strategies_dir='strategies'):
     return strategies
 
 
-def load_strategies_by_name(strategy_names, strategies_dir='strategies'):
+def load_strategies_by_name(strategy_names, strategies_dir=None):
     """
     Carga estrategias específicas por nombre de archivo (sin extensión)
     
@@ -117,19 +117,20 @@ def load_strategies_by_name(strategy_names, strategies_dir='strategies'):
     strategy_names : list of str
         Lista de nombres de archivos (sin .yaml)
         Ejemplo: ['rsi_optimization', 'macd_optimization']
-    strategies_dir : str
+    strategies_dir : str or Path, optional
         Path al directorio con archivos YAML
+        Default: None (usa get_strategies_dir())
     
     Returns:
     --------
     list : Lista de configuraciones de estrategias
     """
-    # Si es path relativo, construir desde el proyecto
-    if not os.path.isabs(strategies_dir):
-        module_dir = os.path.dirname(os.path.abspath(__file__))
-        src_dir = os.path.dirname(module_dir)
-        project_root = os.path.dirname(src_dir)
-        strategies_dir = os.path.join(project_root, strategies_dir)
+    from .utils.paths import get_strategies_dir, get_project_root
+    
+    if strategies_dir is None:
+        strategies_dir = get_strategies_dir()
+    elif not os.path.isabs(strategies_dir):
+        strategies_dir = os.path.join(get_project_root(), strategies_dir)
     
     if not os.path.exists(strategies_dir):
         print(f"⚠️  Directorio de estrategias no existe: {strategies_dir}")
@@ -160,14 +161,15 @@ def load_strategies_by_name(strategy_names, strategies_dir='strategies'):
     return strategies
 
 
-def get_strategy_info(strategies_dir='strategies'):
+def get_strategy_info(strategies_dir=None):
     """
     Muestra información sobre las estrategias disponibles
     
     Parameters:
     -----------
-    strategies_dir : str
+    strategies_dir : str or Path, optional
         Path al directorio con archivos YAML
+        Default: None (usa get_strategies_dir())
     
     Returns:
     --------

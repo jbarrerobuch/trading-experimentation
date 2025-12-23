@@ -6,6 +6,7 @@ Ejecuta backtests de estrategias y calcula métricas de performance
 import numpy as np
 import pandas as pd
 from .indicators import calculate_indicator_and_signals, combine_indicator_signals
+from .constants import COL_SIGNAL, COL_RETURNS, COL_FUTURE_RET
 
 
 def backtest_strategy(df, indicator, params, position_type='long', indicators_combo=None, 
@@ -51,20 +52,20 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
         # Estrategia de indicador individual
         df = calculate_indicator_and_signals(df, indicator, params, inplace=True)
     
-    if 'signal' not in df.columns or df['signal'].isna().all():
+    if COL_SIGNAL not in df.columns or df[COL_SIGNAL].isna().all():
         return None
     
     # future_ret ya está precalculado por calculate_returns_and_momentum()
     # Verificar que existe la columna (ahora se llama future_ret+1)
-    target_col = 'future_ret+1'
+    target_col = f'{COL_FUTURE_RET}+1'
     if target_col not in df.columns:
-        if 'future_ret' in df.columns:
-             target_col = 'future_ret'
+        if COL_FUTURE_RET in df.columns:
+             target_col = COL_FUTURE_RET
         else:
-             df[target_col] = df['returns'].shift(-1)
+             df[target_col] = df[COL_RETURNS].shift(-1)
     
     # Optimización: Usar arrays numpy para operaciones vectorizadas (más rápido)
-    signal_array = df['signal'].values
+    signal_array = df[COL_SIGNAL].values
     future_ret_array = df[target_col].values
     
     # Filtrar por tipo de posición y ajustar retornos
@@ -145,10 +146,8 @@ def backtest_strategy(df, indicator, params, position_type='long', indicators_co
     max_drawdown_usd = drawdown_usd.max()
     
     # PnL por Trade en USD (considerando interés compuesto)
-    capital_before_trade = pd.Series(initial_capital, index=returns.index)
-    if len(returns) > 1:
-        # El capital antes del trade i es el equity del trade i-1
-        capital_before_trade.iloc[1:] = equity_curve.iloc[:-1].values
+    # El capital antes del trade es el equity curve desplazado 1 posición (el equity final del trade anterior)
+    capital_before_trade = equity_curve.shift(1).fillna(initial_capital)
         
     trade_pnls_usd = returns * capital_before_trade
     avg_trade_usd = trade_pnls_usd.mean()

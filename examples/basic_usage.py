@@ -135,10 +135,15 @@ def main():
     print("✅ EJEMPLO COMPLETADO")
     print("=" * 80)
     print("\n💡 Próximos pasos:")
-    if 'img_path' in locals():
-        print(f"1. Ver gráficos en: {img_path}")
-    if 'json_path' in locals():
-        print(f"2. Ver mejores estrategias en: {json_path}")
+    
+    # Definir paths por defecto si no se crearon
+    if 'img_path' not in locals():
+        img_path = "No generado"
+    if 'json_path' not in locals():
+        json_path = "No generado"
+
+    print(f"1. Ver gráficos en: {img_path}")
+    print(f"2. Ver mejores estrategias en: {json_path}")
     print("3. Abrir MLflow UI para explorar experimentos:")
     print(f"   cd {project_root}")
     print("   mlflow ui --backend-store-uri file:./mlruns")
