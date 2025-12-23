@@ -20,7 +20,8 @@ except ImportError:
 
 
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
-                         experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True):
+                         experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
+                         train_split_ratio=1.0):
     """
     Grid Search para optimizar parámetros de estrategias de trading
     Calcula indicadores dinámicamente según configuración
@@ -52,6 +53,10 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
         Deslizamiento estimado (ej: 0.0001 = 0.01%)
     use_next_open : bool
         Si True, ejecuta operaciones al Open de la siguiente vela (más realista).
+    train_split_ratio : float
+        Ratio de datos para entrenamiento (0.0 a 1.0).
+        Si < 1.0, divide los datos en Train/Test y reporta métricas para ambos.
+        Default: 1.0 (Usa todos los datos, sin validación)
     
     Returns:
     --------
@@ -87,6 +92,17 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
         print("⚠️  MLflow no disponible - tracking desactivado")
         use_mlflow = False
     
+    # Preparar datos de Train/Test
+    if train_split_ratio < 1.0:
+        split_idx = int(len(df) * train_split_ratio)
+        train_df = df.iloc[:split_idx].copy()
+        test_df = df.iloc[split_idx:].copy()
+        print(f"📊 Validación Activada: Train={len(train_df)} | Test={len(test_df)} ({train_split_ratio:.0%})")
+    else:
+        train_df = df
+        test_df = None
+        print(f"📊 Validación Desactivada: Usando {len(df)} velas para optimización")
+
     # Calcular total de experimentos
     total_experiments = 0
     for config in strategy_configs:
@@ -160,9 +176,9 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                     for position_type in position_types:
                         experiment_count += 1
                         
-                        # Ejecutar backtest combinado
+                        # Ejecutar backtest combinado (TRAIN)
                         metrics = backtest_strategy(
-                            df=df,
+                            df=train_df,
                             indicator=None,
                             params={},
                             position_type=position_type,
@@ -176,6 +192,24 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         if metrics is None:
                             continue
                         
+                        # Ejecutar backtest combinado (TEST) si aplica
+                        test_metrics = {}
+                        if test_df is not None:
+                            test_metrics_raw = backtest_strategy(
+                                df=test_df,
+                                indicator=None,
+                                params={},
+                                position_type=position_type,
+                                indicators_combo=indicators_combo,
+                                combination_method=combination_method,
+                                commission=commission,
+                                slippage=slippage,
+                                use_next_open=use_next_open
+                            )
+                            if test_metrics_raw:
+                                # Prefijar métricas de test
+                                test_metrics = {f'test_{k}': v for k, v in test_metrics_raw.items()}
+                        
                         # Preparar resultado
                         result = {
                             'ticker': ticker_normalized,
@@ -185,7 +219,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                             'combination_method': combination_method,
                             'position_type': position_type,
                             'n_indicators': len(indicators_combo),
-                            **metrics
+                            **metrics,
+                            **test_metrics
                         }
                         
                         # Agregar parámetros de cada indicador
@@ -205,6 +240,7 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         mlflow.log_param("combination_method", combination_method)
                         mlflow.log_param("position_type", position_type)
                         mlflow.log_param("n_indicators", len(indicators_combo))
+                        mlflow.log_param("train_split", train_split_ratio)
                         
                         for idx, ind_combo in enumerate(indicators_combo):
                             mlflow.log_param(f"ind{idx+1}_name", ind_combo['indicator'])
@@ -213,13 +249,18 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         
                         for metric_name, metric_value in metrics.items():
                             mlflow.log_metric(metric_name, metric_value)
+                            
+                        for metric_name, metric_value in test_metrics.items():
+                            mlflow.log_metric(metric_name, metric_value)
                         
                         mlflow.set_tag("ticker", ticker_normalized)
                         mlflow.set_tag("timeframe", timeframe_normalized)
                         mlflow.set_tag("strategy_type", "combo")
                         # Tag de sesión para agrupar ejecuciones (usa timestamp)
                         session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        mlflow.set_tag("session_id", session_id)                        # Progreso
+                        mlflow.set_tag("session_id", session_id)
+                        
+                        # Progreso
                         if experiment_count % 10 == 0:
                             elapsed = time.time() - start_time
                             avg_time = elapsed / experiment_count
@@ -228,7 +269,6 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                   f"Method: {combination_method} | "
                                   f"Sharpe: {metrics['sharpe_ratio']:.2f} | "
                                   f"ETA: {remaining:.0f}s")
-        
         else:
             # ========== ESTRATEGIA INDIVIDUAL ==========
             indicator = strategy_config['indicator']
@@ -250,14 +290,24 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                 # Extraer position_type si existe
                 position_type = params.pop('position_type', 'long')
                 
-                # Ejecutar backtest
+                # Ejecutar backtest (TRAIN)
                 metrics = backtest_strategy(
-                    df, indicator, params, position_type,
+                    train_df, indicator, params, position_type,
                     commission=commission, slippage=slippage, use_next_open=use_next_open
                 )
                 
                 if metrics is None:
                     continue
+                
+                # Ejecutar backtest (TEST) si aplica
+                test_metrics = {}
+                if test_df is not None:
+                    test_metrics_raw = backtest_strategy(
+                        test_df, indicator, params, position_type,
+                        commission=commission, slippage=slippage, use_next_open=use_next_open
+                    )
+                    if test_metrics_raw:
+                        test_metrics = {f'test_{k}': v for k, v in test_metrics_raw.items()}
                 
                 # Preparar resultado
                 result = {
@@ -268,7 +318,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                     'indicator': indicator,
                     'position_type': position_type,
                     **params,
-                    **metrics
+                    **metrics,
+                    **test_metrics
                 }
                 
                 all_results.append(result)
@@ -280,10 +331,14 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         mlflow.log_param("strategy_type", "single")
                         mlflow.log_param("indicator", indicator)
                         mlflow.log_param("position_type", position_type)
+                        mlflow.log_param("train_split", train_split_ratio)
                         for param_name, param_value in params.items():
                             mlflow.log_param(param_name, param_value)
                         
                         for metric_name, metric_value in metrics.items():
+                            mlflow.log_metric(metric_name, metric_value)
+                            
+                        for metric_name, metric_value in test_metrics.items():
                             mlflow.log_metric(metric_name, metric_value)
                         
                         mlflow.set_tag("ticker", ticker_normalized)

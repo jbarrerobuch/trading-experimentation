@@ -81,7 +81,11 @@ def main():
         use_mlflow=True,
         ticker='BTCUSDT',
         timeframe='1h',
-        experiment_name='RSI_basic'
+        experiment_name='RSI_basic',
+        commission=0.001,  # 0.1%
+        slippage=0.0001,   # 0.01%
+        use_next_open=True,
+        train_split_ratio=0.7 # 70% Train, 30% Test
     )
     
     # ========== 5. ANÁLISIS DE RESULTADOS ==========
@@ -89,19 +93,26 @@ def main():
     
     if not grid_results.empty:
         print(f"\nTotal estrategias testeadas: {len(grid_results)}")
-        print(f"Sharpe promedio: {grid_results['sharpe_ratio'].mean():.3f}")
-        print(f"Mejor Sharpe: {grid_results['sharpe_ratio'].max():.3f}")
+        print(f"Sharpe promedio (Train): {grid_results['sharpe_ratio'].mean():.3f}")
+        print(f"Mejor Sharpe (Train): {grid_results['sharpe_ratio'].max():.3f}")
         
-        print("\n🏆 TOP 5 ESTRATEGIAS:")
+        if 'test_sharpe_ratio' in grid_results.columns:
+             print(f"Sharpe promedio (Test): {grid_results['test_sharpe_ratio'].mean():.3f}")
+        
+        print("\n🏆 TOP 5 ESTRATEGIAS (Ordenado por Train Sharpe):")
         print("-" * 80)
         top5 = grid_results.nlargest(5, 'sharpe_ratio')
         for rank, (idx, row) in enumerate(top5.iterrows(), start=1):
             print(f"\n{rank}. {row['strategy_name']}")
-            print(f"   Indicador: {row['indicator']}")
-            period_val = row.get('period', row.get('lookback', 'N/A'))
-            print(f"   Params: period={period_val}, position={row['position_type']}")
-            print(f"   Sharpe: {row['sharpe_ratio']:.3f} | Win Rate: {row['win_rate']:.1%} | "
-                  f"PF: {row['profit_factor']:.2f} | Trades: {row['n_trades']}")
+            print(f"   Indicador: {row.get('indicator', 'Combo')}")
+            print(f"   TRAIN -> Sharpe: {row['sharpe_ratio']:.3f} | Return: {row['total_return']:.2%}")
+            if 'test_sharpe_ratio' in row:
+                print(f"   TEST  -> Sharpe: {row['test_sharpe_ratio']:.3f} | Return: {row['test_total_return']:.2%}")
+            
+            # period_val = row.get('period', row.get('lookback', 'N/A'))
+            # print(f"   Params: period={period_val}, position={row['position_type']}")
+            # print(f"   Sharpe: {row['sharpe_ratio']:.3f} | Win Rate: {row['win_rate']:.1%} | "
+            #       f"PF: {row['profit_factor']:.2f} | Trades: {row['n_trades']}")
         
         # ========== 6. VISUALIZACIÓN ==========
         print("\n📈 PASO 6: Generando visualización...")
