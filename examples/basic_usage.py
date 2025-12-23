@@ -11,13 +11,17 @@ Este script demuestra cómo usar los módulos para:
 
 import sys
 import os
+from pathlib import Path
 
-# Agregar src/ al path de Python
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)
-src_path = os.path.join(project_root, 'src')
-sys.path.insert(0, src_path)
+# Agregar src/ al path de Python de forma robusta
+# Usamos la nueva utilidad de paths si es posible, pero primero necesitamos importar el módulo
+# Para importar el módulo, necesitamos agregar src al path
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+src_path = project_root / 'src'
+sys.path.insert(0, str(src_path))
 
+from trading_strategy.utils.paths import get_market_data_dir, get_data_dir
 from trading_strategy import (
     load_saved_data,
     calculate_returns_and_momentum,
@@ -34,11 +38,11 @@ def main():
     
     # ========== 1. CARGAR DATOS ==========
     print("\n📥 PASO 1: Cargando datos...")
-    data_path = os.path.join(project_root, 'data', 'market')
-    data = load_saved_data('btcusdt', ['1h'], data_path=data_path)
+    # Usamos la utilidad de paths para obtener el directorio correcto
+    data = load_saved_data('btcusdt', ['1h'])
     
     if not data or '1h' not in data:
-        print("❌ No se pudieron cargar datos. Ejecuta primero el notebook para descargar datos.")
+        print("❌ No se pudieron cargar datos. Ejecuta primero fetch_ohlcv_data para descargar datos.")
         return
     
     df = data['1h']
@@ -101,14 +105,15 @@ def main():
         
         # ========== 6. VISUALIZACIÓN ==========
         print("\n📈 PASO 6: Generando visualización...")
-        img_dir = os.path.join(project_root, 'data', 'img')
-        os.makedirs(img_dir, exist_ok=True)
-        img_path = os.path.join(img_dir, 'example_grid_search.png')
+        data_dir = get_data_dir()
+        img_dir = data_dir / 'img'
+        img_dir.mkdir(exist_ok=True)
+        img_path = img_dir / 'example_grid_search.png'
         
         try:
             visualize_grid_search_results(
                 grid_results,
-                save_path=img_path
+                save_path=str(img_path)
             )
             print(f"✓ Gráfico guardado en: {img_path}")
         except Exception as e:
@@ -116,15 +121,15 @@ def main():
         
         # ========== 7. EXPORTACIÓN ==========
         print("\n💾 PASO 7: Exportando mejores estrategias...")
-        stats_dir = os.path.join(project_root, 'data', 'stats')
-        os.makedirs(stats_dir, exist_ok=True)
-        json_path = os.path.join(stats_dir, 'example_best_strategies.json')
+        stats_dir = data_dir / 'stats'
+        stats_dir.mkdir(exist_ok=True)
+        json_path = stats_dir / 'example_best_strategies.json'
         
         try:
             export_best_strategies(
                 grid_results,
                 top_n=5,
-                save_path=json_path
+                save_path=str(json_path)
             )
             print(f"✓ Estrategias exportadas a: {json_path}")
         except Exception as e:
@@ -142,8 +147,8 @@ def main():
     if 'json_path' not in locals():
         json_path = "No generado"
 
-    print(f"1. Ver gráficos en: {img_path}")
-    print(f"2. Ver mejores estrategias en: {json_path}")
+    print(f"1. Ver gráficos en: {img_path}") # type: ignore
+    print(f"2. Ver mejores estrategias en: {json_path}") # type: ignore
     print("3. Abrir MLflow UI para explorar experimentos:")
     print(f"   cd {project_root}")
     print("   mlflow ui --backend-store-uri file:./mlruns")
