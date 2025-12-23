@@ -77,6 +77,12 @@ def main():
     checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_checkpoints')
     print(f"📂 Checkpoints se guardarán en: {checkpoint_dir}")
     
+    # Generar nombre de experimento dinámico
+    import datetime
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    experiment_name = f"BTC_1H_OPTIMIZATION_{date_str}"
+    print(f"🧪 Experimento MLflow: {experiment_name}")
+    
     input("⏸️  Presiona ENTER para iniciar batch grid search (o Ctrl+C para cancelar)...")
     
     results = batch_grid_search(
@@ -86,7 +92,7 @@ def main():
         use_mlflow=True,            # Registrar en MLflow
         ticker='BTCUSDT',
         timeframe='1h',
-        experiment_name='btc_1h_multiindicator',
+        experiment_name=experiment_name,
         save_checkpoints=True,      # Guardar checkpoints intermedios
         checkpoint_dir=checkpoint_dir
     )

@@ -19,6 +19,55 @@ except ImportError:
     print("⚠️  MLflow no disponible - desactivando tracking")
 
 
+def _generate_run_name(strategy_name, strategy_type, position_type, params=None, indicators_combo=None, combination_method=None):
+    """Genera un nombre descriptivo para el run de MLflow"""
+    # Limpiar nombre de estrategia (quitar _optimization, etc)
+    clean_name = strategy_name.replace('_optimization', '').replace('_strategy', '')
+    name_parts = [clean_name]
+    
+    # Mapa de abreviaturas
+    abbr_map = {
+        'period': 'p', 'length': 'len', 
+        'oversold': 'os', 'overbought': 'ob',
+        'fast_period': 'fast', 'slow_period': 'slow', 'signal_period': 'sig',
+        'std_dev': 'std', 'upper_period': 'up', 'lower_period': 'low'
+    }
+
+    def _format_params(p):
+        if not p: return ""
+        parts = []
+        for k in sorted(p.keys()):
+            v = p[k]
+            key = abbr_map.get(k, k[:3])
+            parts.append(f"{key}{v}")
+        return "".join(parts)
+    
+    if strategy_type == 'combo':
+        # Agregar indicadores con sus parámetros
+        if indicators_combo:
+            inds_parts = []
+            for ind in indicators_combo:
+                name = ind.get('indicator', '?')[:3].upper()
+                p_str = _format_params(ind.get('params', {}))
+                inds_parts.append(f"{name}{p_str}")
+            name_parts.append("-".join(inds_parts))
+        
+        # Agregar método
+        if combination_method:
+            name_parts.append(combination_method)
+            
+    else:
+        # Agregar parámetros clave (abreviados)
+        if params:
+            name_parts.append(_format_params(params))
+            
+    # Agregar tipo de posición (L/S/B)
+    pos_map = {'long': 'L', 'short': 'S', 'both': 'B'}
+    name_parts.append(pos_map.get(position_type, position_type))
+    
+    return "_".join(name_parts)
+
+
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
                          experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
                          train_split_ratio=1.0):
@@ -234,7 +283,12 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         
                 # Log en MLflow
                 if use_mlflow and MLFLOW_AVAILABLE:
-                    with mlflow.start_run(run_name=f"{strategy_name}_{experiment_count}"):
+                    run_name = _generate_run_name(
+                        strategy_name, 'combo', position_type, 
+                        indicators_combo=indicators_combo, 
+                        combination_method=combination_method
+                    )
+                    with mlflow.start_run(run_name=run_name):
                         mlflow.log_param("strategy_name", strategy_name)
                         mlflow.log_param("strategy_type", "combo")
                         mlflow.log_param("combination_method", combination_method)
@@ -326,7 +380,11 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                 
                 # Log en MLflow
                 if use_mlflow and MLFLOW_AVAILABLE:
-                    with mlflow.start_run(run_name=f"{strategy_name}_{experiment_count}"):
+                    run_name = _generate_run_name(
+                        strategy_name, 'single', position_type, 
+                        params=params
+                    )
+                    with mlflow.start_run(run_name=run_name):
                         mlflow.log_param("strategy_name", strategy_name)
                         mlflow.log_param("strategy_type", "single")
                         mlflow.log_param("indicator", indicator)
