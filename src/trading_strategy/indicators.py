@@ -446,52 +446,54 @@ def combine_indicator_signals(
     
     # Combinar señales según método
     signals_matrix = pd.concat(signals_list, axis=1)
-    signals_matrix.columns = [f'{COL_SIGNAL}_{i}' for i in range(len(signals_list))]
+    # Convertir a numpy para operaciones vectorizadas rápidas
+    signals_values = signals_matrix.values
     
     if combination_method == 'AND':
         # Todos deben estar de acuerdo
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: row.iloc[0] if (row == row.iloc[0]).all() else 0,
-            axis=1
-        )
+        # Si todos son 1 -> 1
+        # Si todos son -1 -> -1
+        # Sino 0
+        all_ones = (signals_values == 1).all(axis=1)
+        all_minus_ones = (signals_values == -1).all(axis=1)
+        df[COL_SIGNAL] = np.where(all_ones, 1, np.where(all_minus_ones, -1, 0))
     
     elif combination_method == 'OR':
         # Al menos uno da señal
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: 1 if (row == 1).any() else (-1 if (row == -1).any() else 0),
-            axis=1
-        )
+        # Prioridad a 1 si hay conflicto (o según lógica original)
+        # Original: 1 if any 1, else -1 if any -1, else 0
+        any_ones = (signals_values == 1).any(axis=1)
+        any_minus_ones = (signals_values == -1).any(axis=1)
+        df[COL_SIGNAL] = np.where(any_ones, 1, np.where(any_minus_ones, -1, 0))
     
     elif combination_method == 'MAJORITY':
         # Mayoría simple
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: 1 if (row == 1).sum() > len(row)/2 else (-1 if (row == -1).sum() > len(row)/2 else 0),
-            axis=1
-        )
+        count_ones = (signals_values == 1).sum(axis=1)
+        count_minus_ones = (signals_values == -1).sum(axis=1)
+        threshold = signals_values.shape[1] / 2
+        df[COL_SIGNAL] = np.where(count_ones > threshold, 1, 
+                               np.where(count_minus_ones > threshold, -1, 0))
     
     elif combination_method == 'WEIGHTED':
         # Promedio ponderado
         weights_array = np.array(weights)
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: np.dot(row.values, weights_array) / weights_array.sum(),
-            axis=1
-        )
+        # Dot product vectorizado
+        weighted_sum = signals_values.dot(weights_array)
+        normalized_sum = weighted_sum / weights_array.sum()
+        
         # Convertir a señales discretas
-        df[COL_SIGNAL] = np.where(df[COL_SIGNAL] > 0.3, 1, np.where(df[COL_SIGNAL] < -0.3, -1, 0))
+        df[COL_SIGNAL] = np.where(normalized_sum > 0.3, 1, 
+                               np.where(normalized_sum < -0.3, -1, 0))
     
     elif combination_method == 'UNANIMOUS_LONG':
         # Long solo si todos = 1
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: 1 if (row == 1).all() else 0,
-            axis=1
-        )
+        all_ones = (signals_values == 1).all(axis=1)
+        df[COL_SIGNAL] = np.where(all_ones, 1, 0)
     
     elif combination_method == 'UNANIMOUS_SHORT':
         # Short solo si todos = -1
-        df[COL_SIGNAL] = signals_matrix.apply(
-            lambda row: -1 if (row == -1).all() else 0,
-            axis=1
-        )
+        all_minus_ones = (signals_values == -1).all(axis=1)
+        df[COL_SIGNAL] = np.where(all_minus_ones, -1, 0)
     
     # Rellenar NaN con 0 en la columna signal
     df[COL_SIGNAL] = df[COL_SIGNAL].fillna(0)

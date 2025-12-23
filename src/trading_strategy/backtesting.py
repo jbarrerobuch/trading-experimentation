@@ -192,6 +192,25 @@ def backtest_strategy(
     downside_std = downside_returns.std() if len(downside_returns) > 0 else returns.std()
     sortino = returns.mean() / downside_std if downside_std > 0 else 0
     
+    # --- Métricas Avanzadas (SQN, Kelly) ---
+    # SQN (System Quality Number) - Aproximación basada en periodos
+    # SQN = sqrt(N) * (Mean / StdDev)
+    # Nota: Para SQN real se necesitan retornos por trade, aquí usamos retornos por periodo
+    # lo cual escala con sqrt(N_periods). Es una métrica de calidad de la curva de equity.
+    sqn = np.sqrt(len(returns)) * sharpe
+    
+    # Kelly Criterion (f = p - q/b)
+    # p = win_rate, q = 1-p, b = risk_reward_ratio
+    # Usamos win_rate de periodos y risk_reward de periodos
+    if risk_reward > 0:
+        kelly = win_rate - (1 - win_rate) / risk_reward
+    else:
+        kelly = 0
+        
+    # Expectancy (Esperanza matemática por periodo)
+    # E = (Win% * AvgWin) - (Loss% * AvgLoss)
+    expectancy = (win_rate * avg_win) - ((1 - win_rate) * abs(avg_loss))
+    
     # --- Métricas Nominales (USD) ---
     # Reindexar equity curve al índice original para alinear con turnover si fuera necesario
     # Pero cumulative_returns ya tiene el índice filtrado
@@ -229,6 +248,9 @@ def backtest_strategy(
         'worst_trade': float(returns.min()),
         'avg_return_per_trade': float(returns.mean()), # Retorno promedio por periodo
         'volatility': float(returns.std()),
+        'sqn': float(sqn),
+        'kelly_criterion': float(kelly),
+        'expectancy': float(expectancy),
         
         # Métricas Nominales
         'net_profit_usd': float(net_profit_usd),
