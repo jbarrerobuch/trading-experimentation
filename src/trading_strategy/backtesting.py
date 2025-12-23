@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Union, Any
 from .indicators import calculate_indicator_and_signals, combine_indicator_signals
-from .constants import COL_SIGNAL, COL_RETURNS, COL_FUTURE_RET
+from .constants import COL_SIGNAL, COL_RETURNS, COL_FUTURE_RET, COL_OPEN, COL_CLOSE
 
 
 def backtest_strategy(
@@ -17,7 +17,10 @@ def backtest_strategy(
     position_type: str = 'long', 
     indicators_combo: Optional[List[Dict[str, Any]]] = None, 
     combination_method: str = 'AND', 
-    initial_capital: float = 10000.0
+    initial_capital: float = 10000.0,
+    commission: float = 0.001,  # 0.1% per trade
+    slippage: float = 0.0001,   # 0.01% slippage
+    use_next_open: bool = True  # Execute at next Open
 ) -> Optional[Dict[str, float]]:
     """
     Backtest de estrategia de trading con cálculo de métricas
@@ -36,17 +39,18 @@ def backtest_strategy(
         'long', 'short' o 'both'
     indicators_combo : list or None
         Lista de configuraciones para estrategia multi-indicador
-        Ejemplo:
-        [
-            {'indicator': 'rsi', 'params': {'period': 14, 'overbought': 70, 'oversold': 30}},
-            {'indicator': 'macd', 'params': {'fast': 12, 'slow': 26, 'signal': 9}}
-        ]
     combination_method : str
         Método de combinación si indicators_combo es usado
-        Opciones: 'AND', 'OR', 'MAJORITY', 'WEIGHTED', 'UNANIMOUS_LONG', 'UNANIMOUS_SHORT'
     initial_capital : float
         Capital inicial para calcular métricas nominales (USD)
         Default: 10000.0
+    commission : float
+        Comisión por operación (ej: 0.001 = 0.1%)
+    slippage : float
+        Deslizamiento estimado (ej: 0.0001 = 0.01%)
+    use_next_open : bool
+        Si True, ejecuta operaciones al Open de la siguiente vela (más realista).
+        Si False, asume ejecución al Close de la vela de señal (optimista).
     
     Returns:
     --------
@@ -66,56 +70,95 @@ def backtest_strategy(
         # print("Debug: No signal column or all NaN")
         return None
     
-    # future_ret ya está precalculado por calculate_returns_and_momentum()
-    # Verificar que existe la columna (ahora se llama future_ret+1)
-    target_col = f'{COL_FUTURE_RET}+1'
-    if target_col not in df.columns:
-        if COL_FUTURE_RET in df.columns:
-             target_col = COL_FUTURE_RET
-        else:
-             df[target_col] = df[COL_RETURNS].shift(-1)
+    # --- Lógica de Ejecución y Costes ---
     
-    # Optimización: Usar arrays numpy para operaciones vectorizadas (más rápido)
-    signal_array = df[COL_SIGNAL].values
-    future_ret_array = df[target_col].values
+    # 1. Determinar Posición Objetivo
+    # Filtrar señales según position_type
+    raw_signal = df[COL_SIGNAL].fillna(0)
     
-    # Filtrar por tipo de posición y ajustar retornos
     if position_type == 'long':
-        mask = signal_array > 0
-        adjusted_returns = future_ret_array[mask]
+        # Solo tomar señales positivas
+        target_position = np.where(raw_signal > 0, 1, 0)
     elif position_type == 'short':
-        mask = signal_array < 0
-        adjusted_returns = -future_ret_array[mask]  # Invertir retornos para short
-    else:  # both
-        mask = signal_array != 0
-        # Invertir retornos donde signal < 0
-        adjusted_returns = np.where(signal_array[mask] < 0, 
-                                     -future_ret_array[mask], 
-                                     future_ret_array[mask])
+        # Solo tomar señales negativas
+        target_position = np.where(raw_signal < 0, -1, 0)
+    else: # both
+        # Mantener señales tal cual (-1, 0, 1)
+        target_position = raw_signal.values
+        
+    target_position = pd.Series(target_position, index=df.index)
     
-    # Eliminar NaN y crear Series
-    adjusted_returns = adjusted_returns[~np.isnan(adjusted_returns)]
+    # 2. Calcular Retornos de la Estrategia
+    if use_next_open:
+        # Ejecución al Open de la siguiente vela (T+1)
+        # La posición en T se basa en la señal de T-1
+        current_position = target_position.shift(1).fillna(0)
+        
+        # Retorno del periodo T: (Open[T+1] - Open[T]) / Open[T]
+        # Representa mantener la posición desde Open[T] hasta Open[T+1]
+        next_open = df[COL_OPEN].shift(-1)
+        period_returns = (next_open - df[COL_OPEN]) / df[COL_OPEN]
+        
+    else:
+        # Ejecución al Close de la vela actual (T) - Optimista
+        # La posición en T se asume instantánea al cierre
+        current_position = target_position
+        
+        # Retorno del periodo T: (Close[T+1] - Close[T]) / Close[T]
+        # Usamos future_ret+1 que ya está calculado o lo calculamos
+        target_col = f'{COL_FUTURE_RET}+1'
+        if target_col in df.columns:
+            period_returns = df[target_col]
+        else:
+            period_returns = df[COL_CLOSE].shift(-1) / df[COL_CLOSE] - 1
+
+    # Retorno Bruto = Posición * Retorno del Mercado
+    gross_returns = current_position * period_returns
     
-    if len(adjusted_returns) < 10:
-        # Liberar memoria antes de retornar
-        # print(f"Debug: Not enough trades ({len(adjusted_returns)} < 10)")
-        del signal_array, future_ret_array, mask, adjusted_returns
+    # 3. Calcular Costes de Transacción
+    # Turnover: Cambio absoluto en la posición
+    turnover = current_position.diff().abs().fillna(0)
+    
+    # Corregir el primer trade (si empieza con posición != 0)
+    if current_position.iloc[0] != 0:
+        turnover.iloc[0] = abs(current_position.iloc[0])
+        
+    costs = turnover * (commission + slippage)
+    
+    # 4. Retorno Neto
+    net_returns = gross_returns - costs
+    
+    # Eliminar NaNs (generados por shifts)
+    valid_idx = ~np.isnan(net_returns) & ~np.isnan(period_returns)
+    returns = net_returns[valid_idx]
+    
+    if len(returns) < 10:
         return None
-    
+
     # Calcular métricas
-    returns = pd.Series(adjusted_returns)
+    # returns ya es una Series con los retornos netos
     cumulative_returns = (1 + returns).cumprod()
     
     # Liberar arrays temporales
-    del signal_array, future_ret_array, mask, adjusted_returns
+    # del signal_array, future_ret_array, mask, adjusted_returns # Ya no existen
     
     total_return = cumulative_returns.iloc[-1] - 1
-    n_trades = len(returns)
+    n_periods = len(returns)
     
-    # Hit rate
+    # Calcular número real de trades (basado en turnover)
+    # Un trade completo (entrada + salida) implica turnover = 2 (aprox)
+    # O simplemente contar transacciones (turnover > 0)
+    n_transactions = (turnover[valid_idx] > 0).sum()
+    # Estimación de trades cerrados (transactions / 2)
+    n_trades = max(1, int(n_transactions / 2))
+    
+    # Hit rate (Periodos positivos vs totales)
     hit_rate = (returns > 0).mean()
     
     # Sharpe Ratio (anualizado aproximado)
+    # Asumiendo datos horarios (24*365 = 8760) o diarios (365)
+    # Para ser agnóstico, usamos sharpe por periodo y el usuario escala si quiere
+    # Ojo: Si returns.std() es 0, sharpe es 0
     sharpe = returns.mean() / returns.std() if returns.std() > 0 else 0
     
     # Max Drawdown
@@ -123,11 +166,13 @@ def backtest_strategy(
     drawdown = (cumulative_returns - running_max) / running_max
     max_drawdown = drawdown.min()
     
-    # Win/Loss stats
+    # Win/Loss stats (basado en periodos, no trades completos en vectorizado simple)
+    # Para estadísticas por Trade real, se necesitaría un loop de eventos.
+    # Aquí mantenemos estadísticas por periodo (barra) que es estándar en vectorizado
     wins = returns[returns > 0]
     losses = returns[returns < 0]
     
-    win_rate = len(wins) / n_trades if n_trades > 0 else 0
+    win_rate = len(wins) / len(returns) if len(returns) > 0 else 0 # Win rate de periodos
     avg_win = wins.mean() if len(wins) > 0 else 0
     avg_loss = losses.mean() if len(losses) > 0 else 0
     
@@ -148,6 +193,8 @@ def backtest_strategy(
     sortino = returns.mean() / downside_std if downside_std > 0 else 0
     
     # --- Métricas Nominales (USD) ---
+    # Reindexar equity curve al índice original para alinear con turnover si fuera necesario
+    # Pero cumulative_returns ya tiene el índice filtrado
     equity_curve = initial_capital * cumulative_returns
     final_equity = equity_curve.iloc[-1]
     net_profit_usd = final_equity - initial_capital
@@ -157,16 +204,17 @@ def backtest_strategy(
     drawdown_usd = running_max_equity - equity_curve
     max_drawdown_usd = drawdown_usd.max()
     
-    # PnL por Trade en USD (considerando interés compuesto)
-    # El capital antes del trade es el equity curve desplazado 1 posición (el equity final del trade anterior)
-    capital_before_trade = equity_curve.shift(1).fillna(initial_capital)
-        
-    trade_pnls_usd = returns * capital_before_trade
-    avg_trade_usd = trade_pnls_usd.mean()
+    # Costes totales en USD (aproximado)
+    # costs es % del capital en ese momento.
+    # Aproximación: costs_usd = sum(costs * equity_curve.shift(1))
+    # Esto es complejo vectorizado exacto.
+    # Usamos una métrica simple:
+    total_costs_pct = costs[valid_idx].sum()
     
     metrics = {
         'total_return': float(total_return),
-        'n_trades': int(n_trades),
+        'n_trades': int(n_trades), # Ahora es estimado de trades reales
+        'n_transactions': int(n_transactions),
         'hit_rate': float(hit_rate),
         'win_rate': float(win_rate),
         'sharpe_ratio': float(sharpe),
@@ -179,14 +227,14 @@ def backtest_strategy(
         'risk_reward_ratio': float(risk_reward),
         'best_trade': float(returns.max()),
         'worst_trade': float(returns.min()),
-        'avg_return_per_trade': float(returns.mean()),
+        'avg_return_per_trade': float(returns.mean()), # Retorno promedio por periodo
         'volatility': float(returns.std()),
         
         # Métricas Nominales
         'net_profit_usd': float(net_profit_usd),
         'final_equity': float(final_equity),
         'max_drawdown_usd': float(max_drawdown_usd),
-        'avg_trade_usd': float(avg_trade_usd)
+        'total_costs_pct': float(total_costs_pct)
     }
     
     return metrics

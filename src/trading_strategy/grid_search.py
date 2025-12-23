@@ -20,7 +20,7 @@ except ImportError:
 
 
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
-                         experiment_name='default'):
+                         experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True):
     """
     Grid Search para optimizar parámetros de estrategias de trading
     Calcula indicadores dinámicamente según configuración
@@ -46,6 +46,12 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
     experiment_name : str
         Nombre del experimento en MLflow
         Default: 'default'
+    commission : float
+        Comisión por operación (ej: 0.001 = 0.1%)
+    slippage : float
+        Deslizamiento estimado (ej: 0.0001 = 0.01%)
+    use_next_open : bool
+        Si True, ejecuta operaciones al Open de la siguiente vela (más realista).
     
     Returns:
     --------
@@ -161,7 +167,10 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                             params={},
                             position_type=position_type,
                             indicators_combo=indicators_combo,
-                            combination_method=combination_method
+                            combination_method=combination_method,
+                            commission=commission,
+                            slippage=slippage,
+                            use_next_open=use_next_open
                         )
                         
                         if metrics is None:
@@ -242,7 +251,10 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                 position_type = params.pop('position_type', 'long')
                 
                 # Ejecutar backtest
-                metrics = backtest_strategy(df, indicator, params, position_type)
+                metrics = backtest_strategy(
+                    df, indicator, params, position_type,
+                    commission=commission, slippage=slippage, use_next_open=use_next_open
+                )
                 
                 if metrics is None:
                     continue
