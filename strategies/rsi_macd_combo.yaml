@@ -10,7 +10,7 @@ indicators:
       period: [7, 10, 14, 20]
       overbought: [60, 65, 70, 75]
       oversold: [20, 25, 30, 35]
-      position_type: [both, long, short]
+      position_type: ["long", "short", "both"]
     weight: [1.0, 1.5]
   
   - indicator: macd
@@ -18,8 +18,8 @@ indicators:
       fast: [3, 6, 12, 18]
       slow: [12, 18, 24, 30]
       signal: [6, 9, 12, 15]
-      position_type: [both, long, short]
+      position_type: ["long", "short", "both"]
     weight: [1.0, 1.5]
 
 combination_methods: [AND, WEIGHTED]
-position_types: [both, long, short]
+position_types: ["long", "short", "both"]

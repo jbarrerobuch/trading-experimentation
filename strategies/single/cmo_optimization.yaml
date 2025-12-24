@@ -1,0 +1,6 @@
+name: "Chande Momentum Oscillator Basic Strategy"
+type: "single"
+indicator: "cmo"
+params_grid:
+  period: [14, 20, 30]
+  position_type: ["long", "short", "both"]

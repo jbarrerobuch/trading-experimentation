@@ -1,0 +1,7 @@
+name: "ADX Basic Strategy"
+type: "single"
+indicator: "adx"
+params_grid:
+  period: [14, 20, 30]
+  threshold: [20, 25, 30]
+  position_type: ["long", "short", "both"]

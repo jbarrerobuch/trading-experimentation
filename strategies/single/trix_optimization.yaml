@@ -1,0 +1,7 @@
+name: "Trix Basic Strategy"
+type: "single"
+indicator: "trix"
+params_grid:
+  period: [14, 20, 30]
+  signal: [9, 12]
+  position_type: ["long", "short", "both"]

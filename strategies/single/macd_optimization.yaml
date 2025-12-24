@@ -9,4 +9,4 @@ params_grid:
   fast: [3, 6, 12, 18]
   slow: [12, 18, 24, 30]
   signal: [6, 9, 12, 15]
-  position_type: [both, long, short]
+  position_type: ["long", "short", "both"]

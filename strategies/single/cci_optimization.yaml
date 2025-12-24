@@ -1,0 +1,6 @@
+name: "CCI Basic Strategy"
+type: "single"
+indicator: "cci"
+params_grid:
+  period: [14, 20, 30, 50]
+  position_type: ["long", "short", "both"]

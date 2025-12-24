@@ -1,0 +1,5 @@
+name: "Ultimate Oscillator Basic Strategy"
+type: "single"
+indicator: "uo"
+params_grid:
+  position_type: ["long", "short", "both"]

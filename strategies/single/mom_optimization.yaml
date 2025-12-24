@@ -1,0 +1,6 @@
+name: "Momentum Basic Strategy"
+type: "single"
+indicator: "mom"
+params_grid:
+  period: [10, 14, 20, 30]
+  position_type: ["long", "short", "both"]

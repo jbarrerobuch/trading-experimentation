@@ -1,0 +1,6 @@
+name: "Efficiency Ratio Basic Strategy"
+type: "single"
+indicator: "er"
+params_grid:
+  period: [10, 14, 20, 30]
+  position_type: ["long", "short", "both"]

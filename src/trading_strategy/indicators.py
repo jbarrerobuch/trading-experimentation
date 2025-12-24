@@ -314,15 +314,23 @@ def calculate_indicator_and_signals(
         
         macd_result = ta.macd(df[COL_CLOSE], fast=fast, slow=slow, signal=signal_period)
         if macd_result is not None:
-            df['macd'] = macd_result[f'MACD_{fast}_{slow}_{signal_period}']
-            df['macd_signal_line'] = macd_result[f'MACDs_{fast}_{slow}_{signal_period}']
-            df[COL_SIGNAL] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
-            
-            # Guardar en cache
-            if use_cache:
-                calculated_columns['macd'] = df['macd'].copy()
-                calculated_columns['macd_signal_line'] = df['macd_signal_line'].copy()
-                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            # Buscar columnas dinámicamente para evitar errores de nombre
+            cols = macd_result.columns
+            macd_col = next((c for c in cols if c.startswith('MACD_') and not c.startswith('MACDh') and not c.startswith('MACDs')), None)
+            signal_col = next((c for c in cols if c.startswith('MACDs_')), None)
+
+            if macd_col and signal_col:
+                df['macd'] = macd_result[macd_col]
+                df['macd_signal_line'] = macd_result[signal_col]
+                df[COL_SIGNAL] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
+                
+                # Guardar en cache
+                if use_cache:
+                    calculated_columns['macd'] = df['macd'].copy()
+                    calculated_columns['macd_signal_line'] = df['macd_signal_line'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
         else:
             df[COL_SIGNAL] = 0
     
@@ -366,7 +374,186 @@ def calculate_indicator_and_signals(
         else:
             df[COL_SIGNAL] = 0
     
-    # ... más indicadores (ver notebook para implementación completa)
+    elif indicator == 'stoch':
+        k = params.get('k', 14)
+        d = params.get('d', 3)
+        smooth_k = params.get('smooth_k', 3)
+        
+        stoch = ta.stoch(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], k=k, d=d, smooth_k=smooth_k)
+        if stoch is not None:
+            # pandas-ta returns columns like STOCHk_14_3_3, STOCHd_14_3_3
+            # We need to find them dynamically
+            k_col = next((c for c in stoch.columns if c.startswith('STOCHk_')), None)
+            d_col = next((c for c in stoch.columns if c.startswith('STOCHd_')), None)
+            
+            if k_col and d_col:
+                df['stoch_k'] = stoch[k_col]
+                df['stoch_d'] = stoch[d_col]
+                df[COL_SIGNAL] = np.where(df['stoch_k'] > df['stoch_d'], 1, -1)
+                
+                if use_cache:
+                    calculated_columns['stoch_k'] = df['stoch_k'].copy()
+                    calculated_columns['stoch_d'] = df['stoch_d'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'cci':
+        period = params.get('period', 20)
+        cci = ta.cci(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
+        if cci is not None:
+            df['indicator_value'] = cci
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 100, -1,
+                                   np.where(df['indicator_value'] < -100, 1, 0))
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'er':
+        period = params.get('period', 10)
+        er = ta.er(df[COL_CLOSE], length=period)
+        if er is not None:
+            df['indicator_value'] = er
+            # ER is efficiency ratio, usually used for trend strength. 
+            # Signal logic from calculate_returns_and_momentum: > 0.3 -> 1, else -1
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0.3, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'inertia':
+        period = params.get('period', 20)
+        inertia = ta.inertia(df[COL_CLOSE], df[COL_HIGH], df[COL_LOW], length=period)
+        if inertia is not None:
+            df['indicator_value'] = inertia
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 60, 1,
+                                   np.where(df['indicator_value'] < 40, -1, 0))
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'rsx':
+        period = params.get('period', 14)
+        rsx = ta.rsx(df[COL_CLOSE], length=period)
+        if rsx is not None:
+            df['indicator_value'] = rsx
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 70, -1,
+                                   np.where(df['indicator_value'] < 30, 1, 0))
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'slope':
+        period = params.get('period', 10)
+        slope = ta.slope(df[COL_CLOSE], length=period)
+        if slope is not None:
+            df['indicator_value'] = slope
+            df[COL_SIGNAL] = np.sign(df['indicator_value'])
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'trix':
+        period = params.get('period', 14)
+        signal_period = params.get('signal', 9)
+        trix = ta.trix(df[COL_CLOSE], length=period, signal=signal_period)
+        if trix is not None:
+            # TRIX_14_9
+            trix_col = next((c for c in trix.columns if c.startswith('TRIX_') and not c.startswith('TRIXs_')), None)
+            if trix_col:
+                df['indicator_value'] = trix[trix_col]
+                df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'uo':
+        uo = ta.uo(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE])
+        if uo is not None:
+            df['indicator_value'] = uo
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 50, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'bop':
+        bop = ta.bop(df[COL_OPEN], df[COL_HIGH], df[COL_LOW], df[COL_CLOSE])
+        if bop is not None:
+            df['indicator_value'] = bop
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'cmo':
+        period = params.get('period', 14)
+        cmo = ta.cmo(df[COL_CLOSE], length=period)
+        if cmo is not None:
+            df['indicator_value'] = cmo
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'ao':
+        fast = params.get('fast', 5)
+        slow = params.get('slow', 34)
+        ao = ta.ao(df[COL_HIGH], df[COL_LOW], fast=fast, slow=slow)
+        if ao is not None:
+            df['indicator_value'] = ao
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'mom':
+        period = params.get('period', 10)
+        mom = ta.mom(df[COL_CLOSE], length=period)
+        if mom is not None:
+            df['indicator_value'] = mom
+            df[COL_SIGNAL] = np.sign(df['indicator_value'])
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'roc':
+        period = params.get('period', 10)
+        roc = ta.roc(df[COL_CLOSE], length=period)
+        if roc is not None:
+            df['indicator_value'] = roc
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+            if use_cache:
+                calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
     else:
         # Indicador no implementado, retornar señal neutral
         df[COL_SIGNAL] = 0
