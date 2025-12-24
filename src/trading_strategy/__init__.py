@@ -10,7 +10,7 @@ from .indicators import (
     combine_indicator_signals,
     clear_indicator_cache
 )
-from .backtesting import backtest_strategy
+from .backtesting import backtest_strategy, get_strategy_trades
 from .grid_search import strategy_grid_search
 from .batch_grid_search import (
     batch_grid_search,
@@ -39,6 +39,7 @@ __all__ = [
     
     # Backtesting
     'backtest_strategy',
+    'get_strategy_trades',
     
     # Grid Search
     'strategy_grid_search',

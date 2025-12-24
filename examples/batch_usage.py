@@ -5,6 +5,8 @@ Para experimentos grandes (50K-200K+)
 
 import sys
 import os
+import glob
+import pandas as pd
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.trading_strategy import (
@@ -12,147 +14,198 @@ from src.trading_strategy import (
     load_strategies_by_name,
     batch_grid_search,
     estimate_batch_requirements,
-    calculate_returns_and_momentum
+    calculate_returns_and_momentum,
+    get_strategy_trades
 )
+from src.trading_strategy.utils.paths import get_project_root, get_strategies_dir
 
 
 def main():
-    # ========== 1. CARGAR DATOS ==========
-    print("📥 Cargando datos...")
-    # Cargar datos guardados
-    data = load_saved_data(
-        ticker='BTCUSDT',
-        timeframes=['1h']
-    )
+    # ========== CONFIGURACIÓN ==========
+    tickers = ['BTCUSDT', 'ETHUSDT', 'LTCUSDT', 'SOLUSDT', 'UNIUSDT', 'ZECUSDT']
+    timeframe = '1h'
     
-    if not data or '1h' not in data:
-        print("❌ No se encontraron datos para BTCUSDT 1h")
-        return
-
-    df = data['1h']
-    
-    print(f"✓ Datos cargados: {len(df)} velas")
-    print(f"  Periodo: {df.index[0]} - {df.index[-1]}")
-    
-    # ========== 1.5 CALCULAR RETORNOS ==========
-    print("\n📊 Calculando retornos e indicadores base...")
-    # compute_indicators=False para solo calcular retornos y future_ret+N
-    # Esto optimiza el grid search evitando recálculos
-    df = calculate_returns_and_momentum(
-        df,
-        compute_indicators=False,
-        lookforward_periods=[1]
-    )
-    print("✓ Retornos pre-calculados")
-    
-    # ========== 2. CARGAR ESTRATEGIAS ==========
+    # ========== 1. CARGAR ESTRATEGIAS (Común para todos) ==========
     print("\n📋 Cargando configuraciones de estrategias...")
     
-    # Cargar estrategias específicas
-    # Puedes agregar más nombres de archivos (sin .yaml) a esta lista
-    strategy_names = [
-        'rsi_optimization',
-        'macd_optimization',
-        'williams_r',
-        'rsi_macd_combo'
-    ]
+    # Cargar todas las estrategias de la carpeta 'single'
+    strategies_root = get_strategies_dir()
+    single_dir = os.path.join(strategies_root, 'single')
+    
+    strategy_files = glob.glob(os.path.join(single_dir, '*.yaml'))
+    strategy_names = [f"single/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
+    strategy_names.sort()
+    
+    print(f"  Estrategias encontradas en 'single/': {len(strategy_names)}")
+    
     configs = load_strategies_by_name(strategy_names)
     
     print(f"✓ {len(configs)} configuraciones cargadas")
     
-    # ========== 3. ESTIMAR RECURSOS ==========
+    # ========== 2. ESTIMAR RECURSOS ==========
     print("\n🔍 Estimando recursos necesarios...")
+    estimate_batch_requirements(configs, batch_size=10000)
     
-    # Probar diferentes tamaños de batch
-    batch_sizes = [5000, 10000, 20000]
-    
-    for batch_size in batch_sizes:
-        print(f"\n--- Con batch_size = {batch_size:,} ---")
-        estimate_batch_requirements(configs, batch_size=batch_size)
-    
-    # ========== 4. EJECUTAR BATCH GRID SEARCH ==========
-    print("\n" + "="*80)
-    
-    # Definir directorio temporal para checkpoints
+    # ========== 3. PREPARAR DIRECTORIOS ==========
     checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_checkpoints')
     print(f"📂 Checkpoints se guardarán en: {checkpoint_dir}")
     
-    # Generar nombre de experimento dinámico
     import datetime
     date_str = datetime.datetime.now().strftime("%Y%m%d")
-    experiment_name = f"BTC_1H_OPTIMIZATION_{date_str}"
-    print(f"🧪 Experimento MLflow: {experiment_name}")
     
-    input("⏸️  Presiona ENTER para iniciar batch grid search (o Ctrl+C para cancelar)...")
+    input(f"⏸️  Presiona ENTER para iniciar batch grid search para {tickers} (o Ctrl+C para cancelar)...")
     
-    results = batch_grid_search(
-        df=df,
-        strategy_configs=configs,
-        batch_size=10000,          # 10K experimentos por batch
-        use_mlflow=True,            # Registrar en MLflow
-        ticker='BTCUSDT',
-        timeframe='1h',
-        experiment_name=experiment_name,
-        save_checkpoints=True,      # Guardar checkpoints intermedios
-        checkpoint_dir=checkpoint_dir
-    )
-    
-    # ========== 5. ANALIZAR RESULTADOS ==========
-    print("\n📊 Análisis de resultados...")
-    
-    if not results.empty:
-        print(f"\nTotal resultados: {len(results):,}")
-        print(f"Mejor Sharpe: {results['sharpe_ratio'].max():.3f}")
-        print(f"Peor Sharpe: {results['sharpe_ratio'].min():.3f}")
-        print(f"Promedio Sharpe: {results['sharpe_ratio'].mean():.3f}")
+    # ========== 4. PROCESAR CADA ACTIVO ==========
+    for ticker in tickers:
+        print("\n" + "="*80)
+        print(f"🚀 PROCESANDO {ticker} ({timeframe})")
+        print("="*80)
         
-        # Top 10 estrategias
-        print(f"\n🏆 TOP 10 ESTRATEGIAS:")
-        print("=" * 100)
-        top10 = results.nlargest(10, 'sharpe_ratio')
+        # Cargar datos
+        print(f"📥 Cargando datos para {ticker}...")
+        data = load_saved_data(
+            ticker=ticker,
+            timeframes=[timeframe]
+        )
         
-        for idx, (_, row) in enumerate(top10.iterrows(), 1):
-            print(f"\n{idx}. {row['strategy_name']} - Sharpe: {row['sharpe_ratio']:.3f}")
-            print(f"   Win Rate: {row['win_rate']:.1%} | Total Return: {row['total_return']:.2%}")
-            print(f"   Max DD: {row['max_drawdown']:.2%} | Calmar: {row['calmar_ratio']:.2f}")
+        if not data or timeframe not in data:
+            print(f"❌ No se encontraron datos para {ticker} {timeframe}")
+            continue
+
+        df = data[timeframe]
+        print(f"✓ Datos cargados: {len(df)} velas")
+        print(f"  Periodo: {df.index[0]} - {df.index[-1]}")
+        
+        # Calcular retornos
+        print("\n📊 Calculando retornos e indicadores base...")
+        df = calculate_returns_and_momentum(
+            df,
+            compute_indicators=False,
+            lookforward_periods=[1]
+        )
+        print("✓ Retornos pre-calculados")
+        
+        # Ejecutar Batch Search
+        experiment_name = f"{ticker}_{timeframe.upper()}_OPTIMIZATION_{date_str}"
+        print(f"🧪 Experimento MLflow: {experiment_name}")
+        
+        results = batch_grid_search(
+            df=df,
+            strategy_configs=configs,
+            batch_size=10000,          # 10K experimentos por batch
+            use_mlflow=True,            # Registrar en MLflow
+            ticker=ticker,
+            timeframe=timeframe,
+            experiment_name=experiment_name,
+            save_checkpoints=True,      # Guardar checkpoints intermedios
+            checkpoint_dir=checkpoint_dir
+        )
+        
+        # ========== 5. ANALIZAR RESULTADOS ==========
+        print(f"\n📊 Análisis de resultados para {ticker}...")
+        
+        if not results.empty:
+            print(f"\nTotal resultados: {len(results):,}")
+            print(f"Mejor Sharpe: {results['sharpe_ratio'].max():.3f}")
+            print(f"Peor Sharpe: {results['sharpe_ratio'].min():.3f}")
+            print(f"Promedio Sharpe: {results['sharpe_ratio'].mean():.3f}")
             
-            if row.get('strategy_type') == 'combo':
-                print(f"   Indicators: {row.get('ind1_name', '?')}, {row.get('ind2_name', '?')}")
-                print(f"   Method: {row['combination_method']}")
-            else:
-                print(f"   Indicator: {row.get('indicator', 'N/A')}")
-                print(f"   Params: period={row.get('period', 'N/A')}, "
-                      f"oversold={row.get('oversold', 'N/A')}, "
-                      f"overbought={row.get('overbought', 'N/A')}")
-        
-        # Análisis por tipo de estrategia
-        print(f"\n📈 ANÁLISIS POR TIPO:")
-        print("=" * 100)
-        
-        by_type = results.groupby('strategy_type').agg({
-            'sharpe_ratio': ['count', 'mean', 'max'],
-            'win_rate': 'mean',
-            'total_return': 'mean'
-        }).round(3)
-        print(by_type)
-        
-        # Análisis por batch (ver si hay degradación)
-        if '_batch_id' in results.columns:
-            print(f"\n📦 ANÁLISIS POR BATCH:")
+            # Top 10 estrategias
+            print(f"\n🏆 TOP 10 ESTRATEGIAS ({ticker}):")
             print("=" * 100)
+            top10 = results.nlargest(10, 'sharpe_ratio')
             
-            by_batch = results.groupby('_batch_id').agg({
-                'sharpe_ratio': ['count', 'mean', 'max'],
-                'win_rate': 'mean'
-            }).round(3)
-            print(by_batch)
-        
-        print(f"\n✅ Proceso completado")
-        print(f"💾 Resultados guardados en: batch_results_btc_1h_batch_test_*_FINAL.csv")
-        print(f"💾 Checkpoints en: checkpoint_btc_1h_batch_test_*.csv")
-        
-    else:
-        print("⚠️  No se obtuvieron resultados válidos")
+            # Guardar CSV resumen en data/stats
+            stats_dir = os.path.join(get_project_root(), 'data', 'stats')
+            os.makedirs(stats_dir, exist_ok=True)
+            
+            for idx, (_, row) in enumerate(top10.iterrows(), 1):
+                print(f"\n{idx}. {row['strategy_name']} - Sharpe: {row['sharpe_ratio']:.3f}")
+                print(f"   Win Rate: {row['win_rate']:.1%} | Total Return: {row['total_return']:.2%}")
+                print(f"   Max DD: {row['max_drawdown']:.2%} | Calmar: {row['calmar_ratio']:.2f}")
+                
+                strategy_type = row.get('strategy_type', 'single')
+                position_type = row.get('position_type', 'long')
+                combination_method = row.get('combination_method', 'AND')
+                
+                if strategy_type == 'combo':
+                    print(f"   Indicators: {row.get('ind1_name', '?')}, {row.get('ind2_name', '?')}")
+                    print(f"   Method: {combination_method}")
+                    
+                    # Reconstruir params para combo
+                    indicator = None
+                    params = {}
+                    indicators_combo = []
+                    n_indicators = int(row.get('n_indicators', 0))
+                    
+                    for i in range(1, n_indicators + 1):
+                        ind_name = row.get(f'ind{i}_name')
+                        ind_params = {}
+                        prefix = f'ind{i}_'
+                        for col in row.index:
+                            if col.startswith(prefix) and col != f'{prefix}name' and not pd.isna(row[col]):
+                                param_key = col[len(prefix):]
+                                ind_params[param_key] = row[col]
+                        
+                        indicators_combo.append({
+                            'indicator': ind_name,
+                            'params': ind_params
+                        })
+                        
+                else:
+                    print(f"   Indicator: {row.get('indicator', 'N/A')}")
+                    print(f"   Params: period={row.get('period', 'N/A')}, "
+                          f"oversold={row.get('oversold', 'N/A')}, "
+                          f"overbought={row.get('overbought', 'N/A')}")
+                    
+                    # Reconstruir params para single
+                    indicator = row.get('indicator')
+                    indicators_combo = None
+                    
+                    exclude_cols = {
+                        'ticker', 'timeframe', 'strategy_name', 'strategy_type', 
+                        'indicator', 'position_type', 'combination_method', 'n_indicators',
+                        'total_return', 'sharpe_ratio', 'win_rate', 'max_drawdown',
+                        '_batch_id', '_session_id', 'n_trades', 'n_transactions',
+                        'hit_rate', 'sortino_ratio', 'calmar_ratio', 'profit_factor',
+                        'avg_win', 'avg_loss', 'risk_reward_ratio', 'best_trade',
+                        'worst_trade', 'avg_return_per_trade', 'volatility', 'sqn',
+                        'kelly_criterion', 'expectancy', 'net_profit_usd', 'final_equity',
+                        'max_drawdown_usd', 'total_costs_pct'
+                    }
+                    
+                    params = {}
+                    for col in row.index:
+                        if col not in exclude_cols and not pd.isna(row[col]):
+                             params[col] = row[col]
+
+                # Exportar trades para el Top 5
+                if idx <= 5:
+                    try:
+                        trades_df = get_strategy_trades(
+                            df=df,
+                            indicator=indicator,
+                            params=params,
+                            position_type=position_type,
+                            indicators_combo=indicators_combo,
+                            combination_method=combination_method
+                        )
+                        
+                        if not trades_df.empty:
+                            trades_file = os.path.join(stats_dir, f"trades_{ticker}_{timeframe}_rank{idx}_{date_str}.csv")
+                            trades_df.to_csv(trades_file, index=False)
+                            print(f"   💾 Trades exportados: {os.path.basename(trades_file)}")
+                    except Exception as e:
+                        print(f"   ⚠️ Error exportando trades: {e}")
+            
+            output_file = os.path.join(stats_dir, f"batch_results_{ticker}_{timeframe}_summary_{date_str}.csv")
+            results.to_csv(output_file, index=False)
+            print(f"\n💾 Resultados guardados en: {output_file}")
+            
+        else:
+            print(f"⚠️  No se obtuvieron resultados válidos para {ticker}")
+
+    print("\n✅ Proceso completado para todos los activos")
 
 
 if __name__ == "__main__":
