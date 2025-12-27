@@ -321,11 +321,32 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                         use_next_open=use_next_open
                                     )
                                     if not trades_df.empty:
+                                        # 1. Save CSV
                                         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
                                             trades_df.to_csv(tmp.name, index=False)
                                             tmp_path = tmp.name
                                         mlflow.log_artifact(tmp_path, artifact_path="trades")
                                         os.unlink(tmp_path)
+
+                                        # 2. Save Interactive Chart (Bokeh)
+                                        try:
+                                            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html') as tmp_html:
+                                                tmp_html_path = tmp_html.name
+                                            
+                                            chart_path = create_interactive_trade_chart(
+                                                df=train_df,
+                                                trades_df=trades_df,
+                                                title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
+                                                filename=tmp_html_path,
+                                                indicators=indicators_combo
+                                            )
+                                            
+                                            if chart_path:
+                                                mlflow.log_artifact(chart_path, artifact_path="plots")
+                                                os.unlink(chart_path)
+                                        except Exception as viz_error:
+                                            print(f"⚠️  Error generating chart: {viz_error}")
+
                                 except Exception as e:
                                     print(f"⚠️  Error logging trades artifact: {e}")
 
@@ -463,7 +484,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                         df=train_df,
                                         trades_df=trades_df,
                                         title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
-                                        filename=tmp_html_path
+                                        filename=tmp_html_path,
+                                        indicators=[{'indicator': indicator, 'params': params}]
                                     )
                                     
                                     if chart_path:
