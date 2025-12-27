@@ -135,6 +135,57 @@ def backtest_strategy(
     if len(returns) < 10:
         return None
 
+    # --- Simulación de Trades (Event-based) para métricas precisas ---
+    # Esto calcula estadísticas basadas en OPERACIONES completas (Entrada -> Salida)
+    # en lugar de periodos/velas individuales.
+    trade_pnls = []
+    
+    # Identificar índices donde cambia la posición
+    # current_position ya tiene el shift aplicado si use_next_open=True
+    pos_diff = current_position.diff().fillna(0)
+    # Corregir primer elemento si empieza con posición (raro con shift, pero posible por lógica)
+    if current_position.iloc[0] != 0:
+        pos_diff.iloc[0] = current_position.iloc[0]
+        
+    change_indices = pos_diff[pos_diff != 0].index
+    
+    # Precios de ejecución para la simulación
+    exec_prices = df[COL_OPEN] if use_next_open else df[COL_CLOSE]
+    
+    # Variables de estado para el loop
+    sim_pos = 0
+    sim_entry_price = 0.0
+    
+    for idx in change_indices:
+        new_pos = current_position[idx]
+        price = exec_prices[idx]
+        
+        # 1. Cierre de trade existente (o inversión)
+        if sim_pos != 0:
+            # Calcular retorno bruto del trade
+            if sim_pos > 0: # Long exit
+                gross_pnl = (price - sim_entry_price) / sim_entry_price
+            else: # Short exit
+                gross_pnl = (sim_entry_price - price) / sim_entry_price
+            
+            # Restar costes de Entrada y Salida
+            # Coste por lado = commission + slippage
+            total_trade_cost = (commission + slippage) * 2
+            
+            # Retorno neto del trade
+            net_pnl = gross_pnl - total_trade_cost
+            trade_pnls.append(net_pnl)
+            
+        # 2. Apertura de nuevo trade
+        if new_pos != 0:
+            sim_pos = new_pos
+            sim_entry_price = price
+        else:
+            sim_pos = 0
+            
+    trade_pnls = np.array(trade_pnls)
+    n_real_trades = len(trade_pnls)
+
     # Calcular métricas
     # returns ya es una Series con los retornos netos
     cumulative_returns = (1 + returns).cumprod()
@@ -155,6 +206,33 @@ def backtest_strategy(
     # Hit rate (Periodos positivos vs totales)
     hit_rate = (returns > 0).mean()
     
+    # --- Métricas basadas en Trades Reales ---
+    if n_real_trades > 0:
+        trade_win_rate = (trade_pnls > 0).mean()
+        avg_trade_return = trade_pnls.mean()
+        best_trade = trade_pnls.max()
+        worst_trade = trade_pnls.min()
+        
+        trade_wins = trade_pnls[trade_pnls > 0]
+        trade_losses = trade_pnls[trade_pnls < 0]
+        
+        avg_trade_win = trade_wins.mean() if len(trade_wins) > 0 else 0
+        avg_trade_loss = trade_losses.mean() if len(trade_losses) > 0 else 0
+        
+        gross_trade_profit = trade_wins.sum() if len(trade_wins) > 0 else 0
+        gross_trade_loss = abs(trade_losses.sum()) if len(trade_losses) > 0 else 0
+        
+        trade_profit_factor = gross_trade_profit / gross_trade_loss if gross_trade_loss > 0 else 0
+        
+    else:
+        trade_win_rate = 0.0
+        avg_trade_return = 0.0
+        best_trade = 0.0
+        worst_trade = 0.0
+        avg_trade_win = 0.0
+        avg_trade_loss = 0.0
+        trade_profit_factor = 0.0
+
     # Sharpe Ratio (anualizado aproximado)
     # Asumiendo datos horarios (24*365 = 8760) o diarios (365)
     # Para ser agnóstico, usamos sharpe por periodo y el usuario escala si quiere
@@ -232,21 +310,22 @@ def backtest_strategy(
     
     metrics = {
         'total_return': float(total_return),
-        'n_trades': int(n_trades), # Ahora es estimado de trades reales
+        'n_trades': int(n_real_trades), # Usamos el conteo real de la simulación
         'n_transactions': int(n_transactions),
-        'hit_rate': float(hit_rate),
-        'win_rate': float(win_rate),
+        'hit_rate': float(hit_rate), # % de velas positivas
+        'win_rate': float(trade_win_rate), # % de TRADES positivos (NUEVO)
         'sharpe_ratio': float(sharpe),
         'sortino_ratio': float(sortino),
         'calmar_ratio': float(calmar),
         'max_drawdown': float(max_drawdown),
-        'profit_factor': float(profit_factor),
-        'avg_win': float(avg_win),
-        'avg_loss': float(avg_loss),
-        'risk_reward_ratio': float(risk_reward),
-        'best_trade': float(returns.max()),
-        'worst_trade': float(returns.min()),
-        'avg_return_per_trade': float(returns.mean()), # Retorno promedio por periodo
+        'profit_factor': float(trade_profit_factor), # PF basado en trades (NUEVO)
+        'period_profit_factor': float(profit_factor), # PF basado en velas (ANTIGUO)
+        'avg_win': float(avg_trade_win), # Avg win por trade
+        'avg_loss': float(avg_trade_loss), # Avg loss por trade
+        'risk_reward_ratio': float(abs(avg_trade_win/avg_trade_loss) if avg_trade_loss != 0 else 0),
+        'best_trade': float(best_trade),
+        'worst_trade': float(worst_trade),
+        'avg_return_per_trade': float(avg_trade_return), # Retorno promedio por trade real
         'volatility': float(returns.std()),
         'sqn': float(sqn),
         'kelly_criterion': float(kelly),
