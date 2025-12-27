@@ -212,3 +212,4 @@ __marimo__/
 data
 mlruns
 examples/temp_checkpoints
+mlflow.db

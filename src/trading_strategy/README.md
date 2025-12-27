@@ -212,11 +212,11 @@ results = strategy_grid_search(df, [combo_config], ticker='BTCUSDT', timeframe='
 El framework integra MLflow automáticamente para tracking de experimentos:
 
 ```python
-# Los experimentos se guardan en: ../mlruns/
+# Los experimentos se guardan en: mlflow.db (SQLite)
 # Nombre del experimento: momentum_trading_strategies
 
 # Para ver en UI:
-# mlflow ui --backend-store-uri file:../mlruns
+# mlflow ui --backend-store-uri sqlite:///mlflow.db
 # Abre: http://localhost:5000
 
 # Filtrar en MLflow:

@@ -5,10 +5,21 @@ Optimización de hiperparámetros para estrategias de trading
 
 import time
 import gc
+import os
 import datetime
+import subprocess
+import tempfile
 import pandas as pd
 from itertools import product
-from .backtesting import backtest_strategy
+from .backtesting import backtest_strategy, get_strategy_trades
+from .utils.mlflow_utils import setup_mlflow
+from .utils.helpers import generate_run_name
+
+# Intentar importar psutil para métricas del sistema
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # MLflow (importación condicional)
 try:
@@ -16,56 +27,16 @@ try:
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
+    mlflow = None
     print("⚠️  MLflow no disponible - desactivando tracking")
 
 
-def _generate_run_name(strategy_name, strategy_type, position_type, params=None, indicators_combo=None, combination_method=None):
-    """Genera un nombre descriptivo para el run de MLflow"""
-    # Limpiar nombre de estrategia (quitar _optimization, etc)
-    clean_name = strategy_name.replace('_optimization', '').replace('_strategy', '')
-    name_parts = [clean_name]
-    
-    # Mapa de abreviaturas
-    abbr_map = {
-        'period': 'p', 'length': 'len', 
-        'oversold': 'os', 'overbought': 'ob',
-        'fast_period': 'fast', 'slow_period': 'slow', 'signal_period': 'sig',
-        'std_dev': 'std', 'upper_period': 'up', 'lower_period': 'low'
-    }
-
-    def _format_params(p):
-        if not p: return ""
-        parts = []
-        for k in sorted(p.keys()):
-            v = p[k]
-            key = abbr_map.get(k, k[:3])
-            parts.append(f"{key}{v}")
-        return "".join(parts)
-    
-    if strategy_type == 'combo':
-        # Agregar indicadores con sus parámetros
-        if indicators_combo:
-            inds_parts = []
-            for ind in indicators_combo:
-                name = ind.get('indicator', '?')[:3].upper()
-                p_str = _format_params(ind.get('params', {}))
-                inds_parts.append(f"{name}{p_str}")
-            name_parts.append("-".join(inds_parts))
-        
-        # Agregar método
-        if combination_method:
-            name_parts.append(combination_method)
-            
-    else:
-        # Agregar parámetros clave (abreviados)
-        if params:
-            name_parts.append(_format_params(params))
-            
-    # Agregar tipo de posición (L/S/B)
-    pos_map = {'long': 'L', 'short': 'S', 'both': 'B'}
-    name_parts.append(pos_map.get(position_type, position_type))
-    
-    return "_".join(name_parts)
+def get_git_commit():
+    """Obtiene el hash del commit actual de git"""
+    try:
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+    except Exception:
+        return "unknown"
 
 
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
@@ -126,20 +97,40 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
     clear_indicator_cache()
     
     # Configurar MLflow
-    if use_mlflow and MLFLOW_AVAILABLE:
-        try:
-            from .utils.paths import get_mlruns_dir
-            mlruns_path = get_mlruns_dir()
-            
-            mlflow.set_tracking_uri(f"file:{mlruns_path}")
-            mlflow.set_experiment(experiment_name)
-            print(f"✓ MLflow configurado: {mlruns_path}")
-        except Exception as e:
-            print(f"⚠️  Error configurando MLflow: {e}")
+    if use_mlflow:
+        if not setup_mlflow(experiment_name):
             use_mlflow = False
-    elif use_mlflow and not MLFLOW_AVAILABLE:
-        print("⚠️  MLflow no disponible - tracking desactivado")
-        use_mlflow = False
+
+    # Preparar metadatos del dataset (fuera del loop para eficiencia)
+    dataset_tags = {}
+    mlflow_dataset = None
+    
+    if use_mlflow and not df.empty:
+        try:
+            # Calcular fechas
+            start_date = df.index.min()
+            end_date = df.index.max()
+            duration = end_date - start_date
+            
+            dataset_tags = {
+                "data_start_date": start_date.strftime('%Y-%m-%d %H:%M:%S'),
+                "data_end_date": end_date.strftime('%Y-%m-%d %H:%M:%S'),
+                "data_days": duration.days,
+                "data_rows": len(df)
+            }
+            
+            # Intentar crear objeto Dataset de MLflow
+            try:
+                from mlflow.data.pandas_dataset import PandasDataset
+                # Usar un nombre descriptivo para el dataset
+                ds_name = f"{ticker_normalized}_{timeframe_normalized}"
+                mlflow_dataset = PandasDataset(df, name=ds_name, source=ds_name) # pyright: ignore[reportArgumentType]
+            except (ImportError, AttributeError):
+                # MLflow antiguo o sin soporte de data
+                pass
+                
+        except Exception as e:
+            print(f"⚠️  Error preparando metadatos de MLflow: {e}")
     
     # Preparar datos de Train/Test
     if train_split_ratio < 1.0:
@@ -281,38 +272,74 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         
                         all_results.append(result)
                         
-                # Log en MLflow
-                if use_mlflow and MLFLOW_AVAILABLE:
-                    run_name = _generate_run_name(
-                        strategy_name, 'combo', position_type, 
-                        indicators_combo=indicators_combo, 
-                        combination_method=combination_method
-                    )
-                    with mlflow.start_run(run_name=run_name):
-                        mlflow.log_param("strategy_name", strategy_name)
-                        mlflow.log_param("strategy_type", "combo")
-                        mlflow.log_param("combination_method", combination_method)
-                        mlflow.log_param("position_type", position_type)
-                        mlflow.log_param("n_indicators", len(indicators_combo))
-                        mlflow.log_param("train_split", train_split_ratio)
-                        
-                        for idx, ind_combo in enumerate(indicators_combo):
-                            mlflow.log_param(f"ind{idx+1}_name", ind_combo['indicator'])
-                            for param_name, param_value in ind_combo['params'].items():
-                                mlflow.log_param(f"ind{idx+1}_{param_name}", param_value)
-                        
-                        for metric_name, metric_value in metrics.items():
-                            mlflow.log_metric(metric_name, metric_value)
-                            
-                        for metric_name, metric_value in test_metrics.items():
-                            mlflow.log_metric(metric_name, metric_value)
-                        
-                        mlflow.set_tag("ticker", ticker_normalized)
-                        mlflow.set_tag("timeframe", timeframe_normalized)
-                        mlflow.set_tag("strategy_type", "combo")
-                        # Tag de sesión para agrupar ejecuciones (usa timestamp)
-                        session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        mlflow.set_tag("session_id", session_id)
+                        # Log en MLflow
+                        if use_mlflow and MLFLOW_AVAILABLE and mlflow:
+                            run_name = generate_run_name(
+                                strategy_name, 'combo', position_type, 
+                                indicators_combo=indicators_combo, 
+                                combination_method=combination_method
+                            )
+                            with mlflow.start_run(run_name=run_name):
+                                mlflow.log_param("strategy_name", strategy_name)
+                                mlflow.log_param("strategy_type", "combo")
+                                mlflow.log_param("combination_method", combination_method)
+                                mlflow.log_param("position_type", position_type)
+                                mlflow.log_param("n_indicators", len(indicators_combo))
+                                mlflow.log_param("train_split", train_split_ratio)
+                                
+                                for idx, ind_combo in enumerate(indicators_combo):
+                                    mlflow.log_param(f"ind{idx+1}_name", ind_combo['indicator'])
+                                    for param_name, param_value in ind_combo['params'].items():
+                                        mlflow.log_param(f"ind{idx+1}_{param_name}", param_value)
+                                
+                                for metric_name, metric_value in metrics.items():
+                                    mlflow.log_metric(metric_name, metric_value)
+                                    
+                                for metric_name, metric_value in test_metrics.items():
+                                    mlflow.log_metric(metric_name, metric_value)
+                                
+                                mlflow.set_tag("ticker", ticker_normalized)
+                                mlflow.set_tag("timeframe", timeframe_normalized)
+                                mlflow.set_tag("strategy_type", "combo")
+                                mlflow.set_tag("git_commit", get_git_commit())
+                                
+                                # Log system metrics
+                                if psutil:
+                                    mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
+                                    mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
+
+                                # Log trades artifact
+                                try:
+                                    trades_df = get_strategy_trades(
+                                        df=train_df,
+                                        indicator=None,
+                                        params={},
+                                        position_type=position_type,
+                                        indicators_combo=indicators_combo,
+                                        combination_method=combination_method,
+                                        use_next_open=use_next_open
+                                    )
+                                    if not trades_df.empty:
+                                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
+                                            trades_df.to_csv(tmp.name, index=False)
+                                            tmp_path = tmp.name
+                                        mlflow.log_artifact(tmp_path, artifact_path="trades")
+                                        os.unlink(tmp_path)
+                                except Exception as e:
+                                    print(f"⚠️  Error logging trades artifact: {e}")
+
+                                # Tag de sesión para agrupar ejecuciones (usa timestamp)
+                                session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                mlflow.set_tag("session_id", session_id)
+                                
+                                # Log dataset metadata
+                                for k, v in dataset_tags.items():
+                                    mlflow.set_tag(k, v)
+                                if mlflow_dataset:
+                                    try:
+                                        mlflow.log_input(mlflow_dataset, context="training")
+                                    except Exception:
+                                        pass
                         
                         # Progreso
                         if experiment_count % 10 == 0:
@@ -379,8 +406,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                 all_results.append(result)
                 
                 # Log en MLflow
-                if use_mlflow and MLFLOW_AVAILABLE:
-                    run_name = _generate_run_name(
+                if use_mlflow and MLFLOW_AVAILABLE and mlflow:
+                    run_name = generate_run_name(
                         strategy_name, 'single', position_type, 
                         params=params
                     )
@@ -402,9 +429,43 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                         mlflow.set_tag("ticker", ticker_normalized)
                         mlflow.set_tag("timeframe", timeframe_normalized)
                         mlflow.set_tag("strategy_type", "single")
+                        mlflow.set_tag("git_commit", get_git_commit())
+
+                        # Log system metrics
+                        if psutil:
+                            mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
+                            mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
+
+                        # Log trades artifact
+                        try:
+                            trades_df = get_strategy_trades(
+                                df=train_df,
+                                indicator=indicator,
+                                params=params,
+                                position_type=position_type,
+                                use_next_open=use_next_open
+                            )
+                            if not trades_df.empty:
+                                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
+                                    trades_df.to_csv(tmp.name, index=False)
+                                    tmp_path = tmp.name
+                                mlflow.log_artifact(tmp_path, artifact_path="trades")
+                                os.unlink(tmp_path)
+                        except Exception as e:
+                            print(f"⚠️  Error logging trades artifact: {e}")
+
                         # Tag de sesión para agrupar ejecuciones (usa timestamp)
                         session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         mlflow.set_tag("session_id", session_id)
+                        
+                        # Log dataset metadata
+                        for k, v in dataset_tags.items():
+                            mlflow.set_tag(k, v)
+                        if mlflow_dataset:
+                            try:
+                                mlflow.log_input(mlflow_dataset, context="training")
+                            except Exception:
+                                pass
                 
                 # Progreso
                 if experiment_count % 10 == 0:
@@ -435,15 +496,15 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
         # Mostrar top 5
         print(f"\n🏆 TOP 5 ESTRATEGIAS (por Sharpe Ratio):")
         print("=" * 80)
-        for idx, row in results_df.head(5).iterrows():
+        for rank, (idx, row) in enumerate(results_df.head(5).iterrows()):
             strategy_type = row.get('strategy_type', 'single')
             
             if strategy_type == 'combo':
                 indicators_str = ', '.join([row.get(f'ind{i}_name', '?') for i in range(1, row.get('n_indicators', 0) + 1)])
-                print(f"\n{idx+1}. {row['strategy_name']} (COMBO: {indicators_str})")
+                print(f"\n{rank+1}. {row['strategy_name']} (COMBO: {indicators_str})")
                 print(f"   Method: {row['combination_method']}, Position: {row['position_type']}")
             else:
-                print(f"\n{idx+1}. {row['strategy_name']} ({row.get('indicator', 'N/A')})")
+                print(f"\n{rank+1}. {row['strategy_name']} ({row.get('indicator', 'N/A')})")
                 print(f"   Position: {row['position_type']}, Period: {row.get('period', 'N/A')}")
             
             print(f"   Sharpe: {row['sharpe_ratio']:.3f} | Win%: {row['win_rate']:.1%} | "

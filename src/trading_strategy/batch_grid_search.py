@@ -109,7 +109,7 @@ def create_batch_configs(strategy_config, batch_size):
 def batch_grid_search(df, strategy_configs, batch_size=10000, 
                      use_mlflow=True, ticker='BTCUSDT', timeframe='1h',
                      experiment_name='default', save_checkpoints=True,
-                     checkpoint_dir=None):
+                     checkpoint_dir=None, output_file=None):
     """
     Grid Search con división automática en batches
     Optimiza memoria y permite recuperación ante fallos
@@ -138,6 +138,9 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     checkpoint_dir : str or Path, optional
         Directorio donde guardar los checkpoints.
         Si es None, usa 'checkpoints/' en el root del proyecto.
+    output_file : str or Path, optional
+        Ruta completa donde guardar el archivo final de resultados.
+        Si es None, se guarda en el directorio actual con nombre automático.
         
     Returns:
     --------
@@ -261,7 +264,13 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     print(f"Avg time per batch: {total_elapsed/total_batches:.1f}s")
     
     # Guardar resultados finales
-    final_file = f"batch_results_{experiment_name}_{session_id}_FINAL.csv"
+    if output_file:
+        final_file = str(output_file)
+        # Asegurar que el directorio existe
+        os.makedirs(os.path.dirname(os.path.abspath(final_file)), exist_ok=True)
+    else:
+        final_file = f"batch_results_{experiment_name}_{session_id}_FINAL.csv"
+        
     final_results.to_csv(final_file, index=False)
     print(f"\n💾 Resultados finales guardados: {final_file}")
     

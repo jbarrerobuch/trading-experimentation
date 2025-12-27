@@ -149,3 +149,54 @@ def format_strategy_config(strategy_name, indicator, params):
     """
     params_str = ', '.join([f"{k}={v}" for k, v in params.items()])
     return f"{strategy_name} ({indicator}: {params_str})"
+
+
+def generate_run_name(strategy_name, strategy_type, position_type, params=None, indicators_combo=None, combination_method=None):
+    """
+    Generates a descriptive name for the MLflow run.
+    """
+    # Clean strategy name
+    clean_name = strategy_name.replace('_optimization', '').replace('_strategy', '')
+    name_parts = [clean_name]
+    
+    # Abbreviation map
+    abbr_map = {
+        'period': 'p', 'length': 'len', 
+        'oversold': 'os', 'overbought': 'ob',
+        'fast_period': 'fast', 'slow_period': 'slow', 'signal_period': 'sig',
+        'std_dev': 'std', 'upper_period': 'up', 'lower_period': 'low'
+    }
+
+    def _format_params(p):
+        if not p: return ""
+        parts = []
+        for k in sorted(p.keys()):
+            v = p[k]
+            key = abbr_map.get(k, k[:3])
+            parts.append(f"{key}{v}")
+        return "".join(parts)
+    
+    if strategy_type == 'combo':
+        # Add indicators with their params
+        if indicators_combo:
+            inds_parts = []
+            for ind in indicators_combo:
+                name = ind.get('indicator', '?')[:3].upper()
+                p_str = _format_params(ind.get('params', {}))
+                inds_parts.append(f"{name}{p_str}")
+            name_parts.append("-".join(inds_parts))
+        
+        # Add method
+        if combination_method:
+            name_parts.append(combination_method)
+            
+    else:
+        # Add key params (abbreviated)
+        if params:
+            name_parts.append(_format_params(params))
+            
+    # Add position type (L/S/B)
+    pos_map = {'long': 'L', 'short': 'S', 'both': 'B'}
+    name_parts.append(pos_map.get(position_type, position_type))
+    
+    return "_".join(name_parts)

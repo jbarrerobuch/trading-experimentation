@@ -12,12 +12,12 @@
 
 ## Grid search & MLflow conventions
 - Most automation happens through `strategy_grid_search()` and the batch-friendly `batch_grid_search()` (see `src/trading_strategy/batch_grid_search.py`); the latter splits configs/experiments into checkpoints and logs timing metadata `_batch_id`/`_session_id` to keep the runs resumable.
-- When `use_mlflow=True`, the grid search code sets `mlruns` under the repo root and tags every run with `ticker`, `timeframe`, `strategy_type`, and a timestamp `session_id`. Keep `MLFLOW_TRACKING_URI` pointing at `file:../mlruns` when you run `mlflow ui` (Quickstart commands and the README reiterate this).
+- When `use_mlflow=True`, the grid search code sets `mlflow.db` (SQLite) under the repo root and tags every run with `ticker`, `timeframe`, `strategy_type`, and a timestamp `session_id`. Keep `MLFLOW_TRACKING_URI` pointing at `sqlite:///mlflow.db` when you run `mlflow ui` (Quickstart commands and the README reiterate this).
 - Logging is tolerant of missing MLflow; you can set `use_mlflow=False` to skip the dependency if the environment lacks it, but keep the `mlflow` package in `requirements.txt` for CI/workstations.
 
 ## Workflows & commands to know
 - Install deps via `pip install -r requirements.txt`, then `cd examples` and run `python basic_usage.py` to exercise the full pipeline (data loading, grid search, visualization, export).
-- To inspect experiments, start `mlflow ui --backend-store-uri file:./mlruns` from the repo root and filter by tags such as `tags.ticker = 'BTCUSDT'` and `tags.timeframe = '1h'`.
+- To inspect experiments, start `mlflow ui --backend-store-uri sqlite:///mlflow.db` from the repo root and filter by tags such as `tags.ticker = 'BTCUSDT'` and `tags.timeframe = '1h'`.
 - Tests live under `tests/test_basic.py`; run `pytest tests/ -v` (or targeting the file) to ensure indicator/backtest helpers behave, and reinstall fixtures if you change how returns or metrics are computed.
 
 ## Patterns & data conventions

@@ -165,7 +165,7 @@ def main():
     print(f"2. Ver mejores estrategias en: {json_path}") # type: ignore
     print("3. Abrir MLflow UI para explorar experimentos:")
     print(f"   cd {project_root}")
-    print("   mlflow ui --backend-store-uri file:./mlruns")
+    print("   mlflow ui --backend-store-uri sqlite:///mlflow.db")
     print("   Abrir: http://localhost:5000")
     print("\n4. Filtrar en MLflow:")
     print("   tags.ticker = 'BTCUSDT' AND tags.timeframe = '1h'")

@@ -93,6 +93,15 @@ def main():
         # Ejecutar Batch Search
         print(f"🧪 Experimento MLflow: {EXPERIMENT_NAME}")
         
+        # Obtener rango de fechas para el nombre del archivo
+        start_date = df.index[0].strftime("%Y%m%d")
+        end_date = df.index[-1].strftime("%Y%m%d")
+        
+        # Preparar directorio de salida
+        results_dir = os.path.join(get_project_root(), 'data', 'final_results')
+        os.makedirs(results_dir, exist_ok=True)
+        output_file = os.path.join(results_dir, f"batch_results_{ticker}_{timeframe}_{start_date}-{end_date}_summary_{date_str}.csv")
+        
         results = batch_grid_search(
             df=df,
             strategy_configs=configs,
@@ -102,7 +111,8 @@ def main():
             timeframe=timeframe,
             experiment_name=EXPERIMENT_NAME,
             save_checkpoints=True,      # Guardar checkpoints intermedios
-            checkpoint_dir=checkpoint_dir
+            checkpoint_dir=checkpoint_dir,
+            output_file=output_file     # Guardar directamente en final_results
         )
         
         # ========== 5. ANALIZAR RESULTADOS ==========
@@ -204,9 +214,7 @@ def main():
                     except Exception as e:
                         print(f"   ⚠️ Error exportando trades: {e}")
             
-            output_file = os.path.join(results_dir, f"batch_results_{ticker}_{timeframe}_summary_{date_str}.csv")
-            results.to_csv(output_file, index=False)
-            print(f"\n💾 Resultados guardados en: {output_file}")
+            # El archivo de resultados ya fue guardado por batch_grid_search en output_file
             
         else:
             print(f"⚠️  No se obtuvieron resultados válidos para {ticker}")

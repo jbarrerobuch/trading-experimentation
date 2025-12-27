@@ -234,9 +234,9 @@ importlib.reload(trading_strategy)
 import mlflow
 print(mlflow.get_tracking_uri())
 
-# Debe ser: file:../mlruns
+# Debe ser: sqlite:///mlflow.db
 # Si no, configurar:
-mlflow.set_tracking_uri("file:../mlruns")
+mlflow.set_tracking_uri("sqlite:///mlflow.db")
 ```
 
 ## 🎉 Conclusión

@@ -28,7 +28,7 @@ Esto ejecutará:
 
 ```bash
 cd d:/py_projects/GammaNeutral/main
-mlflow ui --backend-store-uri file:../mlruns
+mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
 Abre: http://localhost:5000
