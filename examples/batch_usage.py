@@ -19,10 +19,14 @@ from src.trading_strategy import (
 )
 from src.trading_strategy.utils.paths import get_project_root, get_strategies_dir
 
+# ========== CONSTANTES GLOBALES ==========
+# Nombre del experimento en MLflow (común para todos los tickers para facilitar comparación)
+EXPERIMENT_NAME = "ethusd_cci_trix"
+
 
 def main():
     # ========== CONFIGURACIÓN ==========
-    tickers = ['BTCUSDT', 'ETHUSDT', 'LTCUSDT', 'SOLUSDT', 'UNIUSDT', 'ZECUSDT']
+    tickers = ['ETHUSDT']
     timeframe = '1h'
     
     # ========== 1. CARGAR ESTRATEGIAS (Común para todos) ==========
@@ -31,12 +35,13 @@ def main():
     # Cargar todas las estrategias de la carpeta 'single'
     strategies_root = get_strategies_dir()
     single_dir = os.path.join(strategies_root, 'single')
+    combo_dir = os.path.join(strategies_root, 'combo')
     
-    strategy_files = glob.glob(os.path.join(single_dir, '*.yaml'))
-    strategy_names = [f"single/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
+    strategy_files = glob.glob(os.path.join(combo_dir, '*.yaml'))
+    strategy_names = [f"combo/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
     strategy_names.sort()
     
-    print(f"  Estrategias encontradas en 'single/': {len(strategy_names)}")
+    print(f"  Estrategias encontradas en: {len(strategy_names)}")
     
     configs = load_strategies_by_name(strategy_names)
     
@@ -86,8 +91,7 @@ def main():
         print("✓ Retornos pre-calculados")
         
         # Ejecutar Batch Search
-        experiment_name = f"{ticker}_{timeframe.upper()}_OPTIMIZATION_{date_str}"
-        print(f"🧪 Experimento MLflow: {experiment_name}")
+        print(f"🧪 Experimento MLflow: {EXPERIMENT_NAME}")
         
         results = batch_grid_search(
             df=df,
@@ -96,7 +100,7 @@ def main():
             use_mlflow=True,            # Registrar en MLflow
             ticker=ticker,
             timeframe=timeframe,
-            experiment_name=experiment_name,
+            experiment_name=EXPERIMENT_NAME,
             save_checkpoints=True,      # Guardar checkpoints intermedios
             checkpoint_dir=checkpoint_dir
         )
@@ -115,9 +119,11 @@ def main():
             print("=" * 100)
             top10 = results.nlargest(10, 'sharpe_ratio')
             
-            # Guardar CSV resumen en data/stats
-            stats_dir = os.path.join(get_project_root(), 'data', 'stats')
-            os.makedirs(stats_dir, exist_ok=True)
+            # Directorios de salida
+            trades_dir = os.path.join(get_project_root(), 'data', 'trades')
+            results_dir = os.path.join(get_project_root(), 'data', 'final_results')
+            os.makedirs(trades_dir, exist_ok=True)
+            os.makedirs(results_dir, exist_ok=True)
             
             for idx, (_, row) in enumerate(top10.iterrows(), 1):
                 print(f"\n{idx}. {row['strategy_name']} - Sharpe: {row['sharpe_ratio']:.3f}")
@@ -192,13 +198,13 @@ def main():
                         )
                         
                         if not trades_df.empty:
-                            trades_file = os.path.join(stats_dir, f"trades_{ticker}_{timeframe}_rank{idx}_{date_str}.csv")
+                            trades_file = os.path.join(trades_dir, f"trades_{ticker}_{timeframe}_rank{idx}_{date_str}.csv")
                             trades_df.to_csv(trades_file, index=False)
                             print(f"   💾 Trades exportados: {os.path.basename(trades_file)}")
                     except Exception as e:
                         print(f"   ⚠️ Error exportando trades: {e}")
             
-            output_file = os.path.join(stats_dir, f"batch_results_{ticker}_{timeframe}_summary_{date_str}.csv")
+            output_file = os.path.join(results_dir, f"batch_results_{ticker}_{timeframe}_summary_{date_str}.csv")
             results.to_csv(output_file, index=False)
             print(f"\n💾 Resultados guardados en: {output_file}")
             

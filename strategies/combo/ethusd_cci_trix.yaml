@@ -1,0 +1,22 @@
+# Estrategia combinada RSI + MACD
+# Combina señales de momentum (RSI) y tendencia (MACD)
+
+name: ethusd_cci_trix
+type: combo
+
+indicators:
+  - indicator: cci
+    params_grid:
+      period: [7, 10, 14, 20, 25]
+      position_type: ["both"]
+    weight: [1.0, 1.5]
+  
+  - indicator: trix
+    params_grid:
+      period: [25, 30, 35]
+      signal: [6, 9, 12, 15]
+      position_type: ["both"]
+    weight: [1.0, 1.5]
+
+combination_methods: [WEIGHTED]
+position_types: ["both"]

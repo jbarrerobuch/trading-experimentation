@@ -19,6 +19,7 @@ from pathlib import Path
 current_file = Path(__file__).resolve()
 project_root = current_file.parent.parent
 src_path = project_root / 'src'
+strategy_path = Path.joinpath(project_root, 'strategies', 'combo')
 sys.path.insert(0, str(src_path))
 
 from trading_strategy.utils.paths import get_market_data_dir, get_data_dir
@@ -39,7 +40,7 @@ def main():
     # ========== 1. CARGAR DATOS ==========
     print("\n📥 PASO 1: Cargando datos...")
     # Usamos la utilidad de paths para obtener el directorio correcto
-    data = load_saved_data('btcusdt', ['1h'])
+    data = load_saved_data('ethusd', ['1h'])
     
     if not data or '1h' not in data:
         print("❌ No se pudieron cargar datos. Ejecuta primero fetch_ohlcv_data para descargar datos.")
@@ -53,7 +54,8 @@ def main():
     print("\n📊 PASO 2: Calculando retornos e indicadores...")
     df = calculate_returns_and_momentum(
         df, 
-        compute_indicators=False  # False para solo retornos (más rápido)
+        compute_indicators=False,  # False para solo retornos (más rápido)
+        lookforward_periods=[1],  # Necesario para backtesting
     )
     print(f"✓ Retornos calculados. Columnas disponibles: {len(df.columns)}")
     
@@ -61,11 +63,12 @@ def main():
     print("\n📂 PASO 3: Cargando estrategias desde archivos YAML...")
     
     configs = load_strategies_by_name([
-        'macd_basic',
+        'ethusd_cci_trix',
         #'rsi_optimization',
         #'macd_optimization',
         #'williams_r',
         #'rsi_macd_combo'
+        strategy_path
     ])
     
     if not configs:
@@ -79,12 +82,12 @@ def main():
         df=df,
         strategy_configs=configs,
         use_mlflow=True,
-        ticker='BTCUSDT',
+        ticker='ETHUSDT',
         timeframe='1h',
-        experiment_name='macd_basic_example',
+        experiment_name='ethusd_cci-trix',
         commission=0.00025,  # 0.025%
-        slippage=0.0001,   # 0.01%
-        use_next_open=True,
+        slippage=0.01,   # 1%
+        use_next_open=False,
         train_split_ratio=0.7 # 70% Train, 30% Test
     )
     

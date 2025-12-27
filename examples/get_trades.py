@@ -25,7 +25,7 @@ def main():
     # ==========================================
     # 1. CONFIGURACIÓN DE ACTIVOS
     # ==========================================
-    tickers = ['BTCUSDT', 'ETHUSDT']
+    tickers = ['ETHUSDT']
     timeframe = '1h'
     
     # ==========================================
@@ -41,27 +41,41 @@ def main():
         
         # --- Opción B: Configuración manual ---
         {
-            'name': 'RSI_Classic_Long',
-            'type': 'single',
-            'indicator': 'rsi',
-            'params': {
-                'period': 14, 
-                'overbought': 70, 
-                'oversold': 30
-            },
-            'position_type': 'long'
-        },
-        {
-            'name': 'MACD_Standard',
-            'type': 'single',
-            'indicator': 'macd',
-            'params': {
-                'fast_period': 12, 
-                'slow_period': 26, 
-                'signal_period': 9
-            },
+            'name': 'ethusd_CCIp14posboth-TRIp25posbothsig15_WEIGHTED1-1.5_B',
+            'type': 'combo',
+            'indicators_combo': [
+                {
+                    'indicator': 'cci',
+                    'params': {
+                        'period': 14, 
+                    },
+                    'position_type': 'both',
+                    'weight': 1.0
+                },
+                {
+                    'indicator': 'trix',
+                    'params': {
+                        'period': 25,
+                        'signal': 15
+                    },
+                    'position_type': 'both',
+                    'weight': 1.5
+                }
+            ],
+            'combination_method': 'WEIGHTED',
             'position_type': 'both'
-        }
+        },
+        #{
+        #    'name': 'MACD_Standard',
+        #    'type': 'single',
+        #    'indicator': 'macd',
+        #    'params': {
+        #        'fast_period': 12, 
+        #        'slow_period': 26, 
+        #        'signal_period': 9
+        #    },
+        #    'position_type': 'both'
+        #}
     ]
     
     # Procesar lista mixta
@@ -81,7 +95,7 @@ def main():
     # ==========================================
     # 3. PREPARAR DIRECTORIO DE SALIDA
     # ==========================================
-    stats_dir = os.path.join(get_project_root(), 'data', 'stats', 'trades')
+    stats_dir = os.path.join(get_project_root(), 'data', 'trades')
     os.makedirs(stats_dir, exist_ok=True)
     print(f"📂 Los trades se guardarán en: {stats_dir}")
     
@@ -141,9 +155,10 @@ def main():
                     print(f"  ✓ Trades generados: {total_trades}")
                     print(f"  ✓ Win Rate: {win_rate:.1%}")
                     print(f"  ✓ Avg PnL: {avg_pnl:.2%}")
+                    print(f"  ✓ Total PnL: {total_pnl:.2%}")
                     
                     # Guardar CSV
-                    filename = f"trades_{ticker}_{timeframe}_{strat_name}_{date_str}.csv"
+                    filename = f"trades_{ticker}_{timeframe}_{strat_name}.csv"
                     filepath = os.path.join(stats_dir, filename)
                     
                     # Agregar metadatos al CSV (opcional, como columnas constantes)
