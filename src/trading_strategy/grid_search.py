@@ -13,6 +13,7 @@ import pandas as pd
 from itertools import product
 from .backtesting import backtest_strategy, get_strategy_trades
 from .utils.mlflow_utils import setup_mlflow
+from .utils.mlflow_viz import create_interactive_trade_chart
 from .utils.helpers import generate_run_name
 
 # Intentar importar psutil para métricas del sistema
@@ -446,11 +447,31 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                 use_next_open=use_next_open
                             )
                             if not trades_df.empty:
+                                # 1. Save CSV
                                 with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
                                     trades_df.to_csv(tmp.name, index=False)
                                     tmp_path = tmp.name
                                 mlflow.log_artifact(tmp_path, artifact_path="trades")
                                 os.unlink(tmp_path)
+
+                                # 2. Save Interactive Chart (Bokeh)
+                                try:
+                                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html') as tmp_html:
+                                        tmp_html_path = tmp_html.name
+                                    
+                                    chart_path = create_interactive_trade_chart(
+                                        df=train_df,
+                                        trades_df=trades_df,
+                                        title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
+                                        filename=tmp_html_path
+                                    )
+                                    
+                                    if chart_path:
+                                        mlflow.log_artifact(chart_path, artifact_path="plots")
+                                        os.unlink(chart_path)
+                                except Exception as viz_error:
+                                    print(f"⚠️  Error generating chart: {viz_error}")
+
                         except Exception as e:
                             print(f"⚠️  Error logging trades artifact: {e}")
 
