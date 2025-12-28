@@ -318,16 +318,23 @@ def calculate_indicator_and_signals(
             cols = macd_result.columns
             macd_col = next((c for c in cols if c.startswith('MACD_') and not c.startswith('MACDh') and not c.startswith('MACDs')), None)
             signal_col = next((c for c in cols if c.startswith('MACDs_')), None)
+            hist_col = next((c for c in cols if c.startswith('MACDh_')), None)
 
             if macd_col and signal_col:
                 df['macd'] = macd_result[macd_col]
                 df['macd_signal_line'] = macd_result[signal_col]
+                if hist_col:
+                    df['macd_histogram'] = macd_result[hist_col]
+                else:
+                    df['macd_histogram'] = df['macd'] - df['macd_signal_line']
+                
                 df[COL_SIGNAL] = np.where(df['macd'] > df['macd_signal_line'], 1, -1)
                 
                 # Guardar en cache
                 if use_cache:
                     calculated_columns['macd'] = df['macd'].copy()
                     calculated_columns['macd_signal_line'] = df['macd_signal_line'].copy()
+                    calculated_columns['macd_histogram'] = df['macd_histogram'].copy()
                     calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
             else:
                 df[COL_SIGNAL] = 0
