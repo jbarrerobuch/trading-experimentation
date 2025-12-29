@@ -43,7 +43,7 @@ def get_git_commit():
 
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
                          experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
-                         train_split_ratio=1.0):
+                         train_split_ratio=1.0, session_id=None):
     """
     Grid Search para optimizar parámetros de estrategias de trading
     Calcula indicadores dinámicamente según configuración
@@ -79,6 +79,9 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
         Ratio de datos para entrenamiento (0.0 a 1.0).
         Si < 1.0, divide los datos en Train/Test y reporta métricas para ambos.
         Default: 1.0 (Usa todos los datos, sin validación)
+    session_id : str, optional
+        ID de sesión para agrupar ejecuciones en MLflow.
+        Si es None, se genera uno nuevo basado en timestamp.
     
     Returns:
     --------
@@ -357,8 +360,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                     print(f"⚠️  Error logging trades artifact: {e}")
 
                                 # Tag de sesión para agrupar ejecuciones (usa timestamp)
-                                session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                mlflow.set_tag("session_id", session_id)
+                                current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                mlflow.set_tag("session_id", current_session_id)
                                 
                                 # Log dataset metadata
                                 for k, v in dataset_tags.items():
@@ -509,8 +512,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                             print(f"⚠️  Error logging trades artifact: {e}")
 
                         # Tag de sesión para agrupar ejecuciones (usa timestamp)
-                        session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        mlflow.set_tag("session_id", session_id)
+                        current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        mlflow.set_tag("session_id", current_session_id)
                         
                         # Log dataset metadata
                         for k, v in dataset_tags.items():

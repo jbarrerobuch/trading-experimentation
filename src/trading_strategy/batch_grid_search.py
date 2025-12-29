@@ -112,7 +112,7 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
                      checkpoint_dir=None, output_file=None):
     """
     Grid Search con división automática en batches
-    Optimiza memoria y permite recuperación ante fallos
+    Optimiza memoria y permite recuperación automática (Auto-Resume)
     
     Parameters:
     -----------
@@ -122,8 +122,6 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
         Lista de configuraciones de estrategia
     batch_size : int
         Número máximo de experimentos por batch
-        Recomendado: 5K-20K para equilibrar memoria/velocidad
-        Default: 10000
     use_mlflow : bool
         Si True, registra en MLflow
     ticker : str
@@ -131,47 +129,38 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     timeframe : str
         Timeframe de los datos
     experiment_name : str
-        Nombre del experimento en MLflow
+        Nombre del experimento. Se usa para agrupar checkpoints.
     save_checkpoints : bool
-        Si True, guarda resultados intermedios en CSV
-        Default: True
+        Si True, guarda y carga checkpoints automáticamente.
     checkpoint_dir : str or Path, optional
-        Directorio donde guardar los checkpoints.
-        Si es None, usa 'checkpoints/' en el root del proyecto.
+        Directorio de checkpoints.
     output_file : str or Path, optional
-        Ruta completa donde guardar el archivo final de resultados.
-        Si es None, se guarda en el directorio actual con nombre automático.
+        Ruta del archivo final.
         
     Returns:
     --------
     DataFrame consolidado con todos los resultados
-    
-    Example:
-    --------
-    >>> configs = load_all_strategies()
-    >>> # En lugar de 100K runs en una ejecución:
-    >>> results = batch_grid_search(df, configs, batch_size=10000)
-    >>> # → Ejecuta 10 batches de 10K, cada uno libera memoria
     """
+    import re
     
     print(f"\n{'='*80}")
-    print(f"🔄 BATCH GRID SEARCH")
+    print(f"🔄 BATCH GRID SEARCH (Auto-Resume Enabled)")
     print(f"{'='*80}")
     print(f"Batch size: {batch_size:,} experiments per batch")
     print(f"Experiment: {experiment_name}")
     print(f"Ticker: {ticker} | Timeframe: {timeframe}")
     
-    # ID único para esta sesión de batches
-    session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    print(f"Session ID: {session_id}")
+    # Generar SIEMPRE un nuevo ID para la ejecución actual
+    current_session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    print(f"Current Run Session ID: {current_session_id}")
     
     # Configurar directorio de checkpoints
+    if checkpoint_dir is None:
+        checkpoint_dir = get_project_root() / 'checkpoints'
+    else:
+        checkpoint_dir = Path(checkpoint_dir)
+        
     if save_checkpoints:
-        if checkpoint_dir is None:
-            checkpoint_dir = get_project_root() / 'checkpoints'
-        else:
-            checkpoint_dir = Path(checkpoint_dir)
-            
         os.makedirs(checkpoint_dir, exist_ok=True)
         print(f"📂 Directorio de checkpoints: {checkpoint_dir}")
     
@@ -187,11 +176,65 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     total_batches = len(all_batch_configs)
     print(f"\n🎯 Total batches a ejecutar: {total_batches}")
     
-    # Ejecutar cada batch
+    # ==========================================
+    # LÓGICA DE RECUPERACIÓN (AUTO-RESUME)
+    # ==========================================
+    completed_batches = {} # Map: batch_idx -> (timestamp, filepath, df)
     all_results = []
+    
+    if save_checkpoints:
+        print(f"\n🔍 Buscando checkpoints previos para '{experiment_name}'...")
+        
+        # Regex para parsear: checkpoint_{experiment_name}_{session_id}_batch{batch_idx}.csv
+        # session_id formato: YYYYMMDD_HHMMSS (15 chars)
+        # Usamos re.escape para el nombre del experimento por si tiene caracteres especiales
+        filename_pattern = re.compile(rf"checkpoint_{re.escape(experiment_name)}_(\d{{8}}_\d{{6}})_batch(\d+)\.csv")
+        
+        checkpoint_files = list(checkpoint_dir.glob(f"checkpoint_{experiment_name}_*_batch*.csv")) # pyright: ignore[reportOptionalMemberAccess]
+        
+        for cp_file in checkpoint_files:
+            match = filename_pattern.match(cp_file.name)
+            if match:
+                cp_session_id = match.group(1)
+                batch_idx = int(match.group(2))
+                
+                # Si encontramos múltiples versiones del mismo batch, nos quedamos con la más reciente (por session_id)
+                if batch_idx in completed_batches:
+                    if cp_session_id > completed_batches[batch_idx]['session_id']:
+                        completed_batches[batch_idx] = {'session_id': cp_session_id, 'file': cp_file}
+                else:
+                    completed_batches[batch_idx] = {'session_id': cp_session_id, 'file': cp_file}
+        
+        # Cargar los datos de los checkpoints seleccionados
+        if completed_batches:
+            print(f"   Encontrados checkpoints para {len(completed_batches)} batches.")
+            for batch_idx, info in sorted(completed_batches.items()):
+                try:
+                    df_cp = pd.read_csv(info['file'])
+                    if not df_cp.empty:
+                        all_results.append(df_cp)
+                        print(f"   ✓ Batch {batch_idx} recuperado de sesión {info['session_id']}")
+                    else:
+                        # Si está vacío, lo quitamos para que se re-ejecute
+                        print(f"   ⚠️ Batch {batch_idx} estaba vacío, se re-ejecutará.")
+                        del completed_batches[batch_idx]
+                except Exception as e:
+                    print(f"   ❌ Error leyendo {info['file'].name}, se re-ejecutará: {e}")
+                    del completed_batches[batch_idx]
+        else:
+            print("   No se encontraron checkpoints previos válidos.")
+
+    # ==========================================
+    # EJECUCIÓN
+    # ==========================================
     start_time = time.time()
     
     for batch_idx, batch_config in enumerate(all_batch_configs, 1):
+        # Verificar si ya está completado
+        if batch_idx in completed_batches:
+            # Ya lo cargamos arriba
+            continue
+
         batch_start = time.time()
         strategy_name = batch_config.get('name', 'unnamed')
         batch_id = batch_config.get('_batch_id', 0)
@@ -204,38 +247,41 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
         
         try:
             # Ejecutar grid search para este batch
-            # (pasamos configs individuales, no lista)
+            # Usamos el current_session_id para los nuevos runs
             batch_results = strategy_grid_search(
                 df=df,
                 strategy_configs=[batch_config],
                 use_mlflow=use_mlflow,
                 ticker=ticker,
                 timeframe=timeframe,
-                experiment_name=experiment_name
+                experiment_name=experiment_name,
+                session_id=current_session_id 
             )
             
             # Agregar metadatos de batch
             if not batch_results.empty:
                 batch_results['_batch_id'] = batch_idx
-                batch_results['_session_id'] = session_id
+                batch_results['_session_id'] = current_session_id
                 all_results.append(batch_results)
                 
                 batch_elapsed = time.time() - batch_start
                 total_elapsed = time.time() - start_time
-                avg_time_per_batch = total_elapsed / batch_idx
-                eta = avg_time_per_batch * (total_batches - batch_idx)
                 
-                print(f"\n✓ Batch completado en {batch_elapsed:.1f}s")
-                print(f"  Experimentos en batch: {len(batch_results)}")
-                print(f"  Total acumulado: {sum(len(r) for r in all_results):,}")
-                print(f"  ETA total: {eta:.0f}s ({eta/60:.1f}min)")
+                # Calcular ETA basado solo en los batches ejecutados en esta sesión
+                batches_run_so_far = len([b for b in range(1, batch_idx+1) if b not in completed_batches])
+                if batches_run_so_far > 0:
+                    avg_time = total_elapsed / batches_run_so_far
+                    remaining_batches = total_batches - batch_idx
+                    eta = avg_time * remaining_batches
+                    print(f"\n✓ Batch completado en {batch_elapsed:.1f}s")
+                    print(f"  ETA restante: {eta:.0f}s ({eta/60:.1f}min)")
                 
-                # Guardar checkpoint
+                # Guardar checkpoint con el ID de la sesión ACTUAL
                 if save_checkpoints:
-                    filename = f"checkpoint_{experiment_name}_{session_id}_batch{batch_idx}.csv"
+                    filename = f"checkpoint_{experiment_name}_{current_session_id}_batch{batch_idx}.csv"
                     checkpoint_file = checkpoint_dir / filename # pyright: ignore[reportOptionalOperand]
                     batch_results.to_csv(checkpoint_file, index=False)
-                    print(f"  💾 Checkpoint guardado: {checkpoint_file}")
+                    print(f"  💾 Checkpoint guardado: {filename}")
             
             else:
                 print(f"\n⚠️  Batch {batch_idx} sin resultados válidos")
@@ -260,8 +306,8 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     print(f"{'='*80}")
     print(f"Total experiments: {len(final_results):,}")
     print(f"Total batches: {total_batches}")
-    print(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f}min)")
-    print(f"Avg time per batch: {total_elapsed/total_batches:.1f}s")
+    print(f"  - Recuperados: {len(completed_batches)}")
+    print(f"  - Ejecutados: {total_batches - len(completed_batches)}")
     
     # Guardar resultados finales
     if output_file:
@@ -269,7 +315,8 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
         # Asegurar que el directorio existe
         os.makedirs(os.path.dirname(os.path.abspath(final_file)), exist_ok=True)
     else:
-        final_file = f"batch_results_{experiment_name}_{session_id}_FINAL.csv"
+        # Usamos el current_session_id para el archivo final, indicando cuándo se terminó
+        final_file = f"batch_results_{experiment_name}_{current_session_id}_FINAL.csv"
         
     final_results.to_csv(final_file, index=False)
     print(f"\n💾 Resultados finales guardados: {final_file}")
@@ -280,14 +327,15 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     for idx, row in final_results.head(5).iterrows():
         strategy_type = row.get('strategy_type', 'single')
         batch_id = row.get('_batch_id', '?')
+        sess_id = row.get('_session_id', '?')
         
         if strategy_type == 'combo':
             indicators_str = ', '.join([row.get(f'ind{i}_name', '?') 
                                        for i in range(1, row.get('n_indicators', 0) + 1)])
-            print(f"\n{idx+1}. {row['strategy_name']} (COMBO: {indicators_str}) [Batch {batch_id}]")
+            print(f"\n{idx+1}. {row['strategy_name']} (COMBO: {indicators_str}) [Batch {batch_id} | {sess_id}]")
             print(f"   Method: {row['combination_method']}, Position: {row['position_type']}")
         else:
-            print(f"\n{idx+1}. {row['strategy_name']} ({row.get('indicator', 'N/A')}) [Batch {batch_id}]")
+            print(f"\n{idx+1}. {row['strategy_name']} ({row.get('indicator', 'N/A')}) [Batch {batch_id} | {sess_id}]")
             print(f"   Position: {row['position_type']}, Period: {row.get('period', 'N/A')}")
         
         print(f"   Sharpe: {row['sharpe_ratio']:.3f} | Win%: {row['win_rate']:.1%} | "

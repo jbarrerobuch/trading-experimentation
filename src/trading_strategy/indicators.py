@@ -294,7 +294,7 @@ def calculate_indicator_and_signals(
     calculated_columns = {}
     
     if indicator == 'rsi':
-        period = params.get('period', 14)
+        period = int(params.get('period', 14))
         overbought = params.get('overbought', 70)
         oversold = params.get('oversold', 30)
         
@@ -308,9 +308,9 @@ def calculate_indicator_and_signals(
             calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
     
     elif indicator == 'macd':
-        fast = params.get('fast', 12)
-        slow = params.get('slow', 26)
-        signal_period = params.get('signal', 9)
+        fast = int(params.get('fast', 12))
+        slow = int(params.get('slow', 26))
+        signal_period = int(params.get('signal', 9))
         
         macd_result = ta.macd(df[COL_CLOSE], fast=fast, slow=slow, signal=signal_period)
         if macd_result is not None:
@@ -342,7 +342,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
     
     elif indicator == 'willr':
-        period = params.get('period', 14)
+        period = int(params.get('period', 14))
         high_threshold = params.get('high_threshold', -20)
         low_threshold = params.get('low_threshold', -80)
         
@@ -360,7 +360,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
     
     elif indicator == 'adx':
-        period = params.get('period', 14)
+        period = int(params.get('period', 14))
         threshold = params.get('threshold', 25)
         
         adx_result = ta.adx(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
@@ -382,9 +382,9 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
     
     elif indicator == 'stoch':
-        k = params.get('k', 14)
-        d = params.get('d', 3)
-        smooth_k = params.get('smooth_k', 3)
+        k = int(params.get('k', 14))
+        d = int(params.get('d', 3))
+        smooth_k = int(params.get('smooth_k', 3))
         
         stoch = ta.stoch(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], k=k, d=d, smooth_k=smooth_k)
         if stoch is not None:
@@ -408,7 +408,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'cci':
-        period = params.get('period', 20)
+        period = int(params.get('period', 20))
         cci = ta.cci(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
         if cci is not None:
             df['indicator_value'] = cci
@@ -421,7 +421,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'er':
-        period = params.get('period', 10)
+        period = int(params.get('period', 10))
         er = ta.er(df[COL_CLOSE], length=period)
         if er is not None:
             df['indicator_value'] = er
@@ -435,7 +435,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'inertia':
-        period = params.get('period', 20)
+        period = int(params.get('period', 20))
         inertia = ta.inertia(df[COL_CLOSE], df[COL_HIGH], df[COL_LOW], length=period)
         if inertia is not None:
             df['indicator_value'] = inertia
@@ -448,7 +448,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'rsx':
-        period = params.get('period', 14)
+        period = int(params.get('period', 14))
         rsx = ta.rsx(df[COL_CLOSE], length=period)
         if rsx is not None:
             df['indicator_value'] = rsx
@@ -461,7 +461,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'slope':
-        period = params.get('period', 10)
+        period = int(params.get('period', 10))
         slope = ta.slope(df[COL_CLOSE], length=period)
         if slope is not None:
             df['indicator_value'] = slope
@@ -473,8 +473,8 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'trix':
-        period = params.get('period', 14)
-        signal_period = params.get('signal', 9)
+        period = int(params.get('period', 14))
+        signal_period = int(params.get('signal', 9))
         trix = ta.trix(df[COL_CLOSE], length=period, signal=signal_period)
         if trix is not None:
             # TRIX_14_9
@@ -513,7 +513,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'cmo':
-        period = params.get('period', 14)
+        period = int(params.get('period', 14))
         cmo = ta.cmo(df[COL_CLOSE], length=period)
         if cmo is not None:
             df['indicator_value'] = cmo
@@ -525,8 +525,8 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'ao':
-        fast = params.get('fast', 5)
-        slow = params.get('slow', 34)
+        fast = int(params.get('fast', 5))
+        slow = int(params.get('slow', 34))
         ao = ta.ao(df[COL_HIGH], df[COL_LOW], fast=fast, slow=slow)
         if ao is not None:
             df['indicator_value'] = ao
@@ -538,7 +538,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'mom':
-        period = params.get('period', 10)
+        period = int(params.get('period', 10))
         mom = ta.mom(df[COL_CLOSE], length=period)
         if mom is not None:
             df['indicator_value'] = mom
@@ -550,7 +550,7 @@ def calculate_indicator_and_signals(
             df[COL_SIGNAL] = 0
 
     elif indicator == 'roc':
-        period = params.get('period', 10)
+        period = int(params.get('period', 10))
         roc = ta.roc(df[COL_CLOSE], length=period)
         if roc is not None:
             df['indicator_value'] = roc
