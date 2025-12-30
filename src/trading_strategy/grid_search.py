@@ -43,7 +43,7 @@ def get_git_commit():
 
 def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
                          experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
-                         train_split_ratio=1.0, session_id=None):
+                         train_split_ratio=1.0, session_id=None, log_artifacts=False):
     """
     Grid Search para optimizar parámetros de estrategias de trading
     Calcula indicadores dinámicamente según configuración
@@ -82,6 +82,9 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
     session_id : str, optional
         ID de sesión para agrupar ejecuciones en MLflow.
         Si es None, se genera uno nuevo basado en timestamp.
+    log_artifacts : bool
+        Si True, genera y guarda gráficos y CSVs de trades para CADA experimento.
+        ⚠️  Muy lento para grid search grandes. Default: False.
     
     Returns:
     --------
@@ -313,51 +316,52 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                     mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
                                     mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
 
-                                # Log trades artifact
-                                try:
-                                    trades_df = get_strategy_trades(
-                                        df=train_df,
-                                        indicator=None,
-                                        params={},
-                                        position_type=position_type,
-                                        indicators_combo=indicators_combo,
-                                        combination_method=combination_method,
-                                        use_next_open=use_next_open
-                                    )
-                                    if not trades_df.empty:
-                                        # Sanitize run_name for filenames
-                                        safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
-                                        
-                                        # 1. Save CSV
-                                        csv_filename = f"trades_{safe_run_name}.csv"
-                                        csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
-                                        trades_df.to_csv(csv_path, index=False)
-                                        mlflow.log_artifact(csv_path, artifact_path="trades")
-                                        if os.path.exists(csv_path):
-                                            os.unlink(csv_path)
-
-                                        # 2. Save Interactive Chart (Bokeh)
-                                        try:
-                                            html_filename = f"viz_{safe_run_name}.html"
-                                            html_path = os.path.join(tempfile.gettempdir(), html_filename)
+                                # Log trades artifact (SOLO SI SE SOLICITA EXPLICITAMENTE)
+                                if log_artifacts:
+                                    try:
+                                        trades_df = get_strategy_trades(
+                                            df=train_df,
+                                            indicator=None,
+                                            params={},
+                                            position_type=position_type,
+                                            indicators_combo=indicators_combo,
+                                            combination_method=combination_method,
+                                            use_next_open=use_next_open
+                                        )
+                                        if not trades_df.empty:
+                                            # Sanitize run_name for filenames
+                                            safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
                                             
-                                            chart_path = create_interactive_trade_chart(
-                                                df=train_df,
-                                                trades_df=trades_df,
-                                                title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
-                                                filename=html_path,
-                                                indicators=indicators_combo
-                                            )
-                                            
-                                            if chart_path:
-                                                mlflow.log_artifact(chart_path, artifact_path="plots")
-                                                if os.path.exists(chart_path):
-                                                    os.unlink(chart_path)
-                                        except Exception as viz_error:
-                                            print(f"⚠️  Error generating chart: {viz_error}")
+                                            # 1. Save CSV
+                                            csv_filename = f"trades_{safe_run_name}.csv"
+                                            csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
+                                            trades_df.to_csv(csv_path, index=False)
+                                            mlflow.log_artifact(csv_path, artifact_path="trades")
+                                            if os.path.exists(csv_path):
+                                                os.unlink(csv_path)
 
-                                except Exception as e:
-                                    print(f"⚠️  Error logging trades artifact: {e}")
+                                            # 2. Save Interactive Chart (Bokeh)
+                                            try:
+                                                html_filename = f"viz_{safe_run_name}.html"
+                                                html_path = os.path.join(tempfile.gettempdir(), html_filename)
+                                                
+                                                chart_path = create_interactive_trade_chart(
+                                                    df=train_df,
+                                                    trades_df=trades_df,
+                                                    title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
+                                                    filename=html_path,
+                                                    indicators=indicators_combo
+                                                )
+                                                
+                                                if chart_path:
+                                                    mlflow.log_artifact(chart_path, artifact_path="plots")
+                                                    if os.path.exists(chart_path):
+                                                        os.unlink(chart_path)
+                                            except Exception as viz_error:
+                                                print(f"⚠️  Error generating chart: {viz_error}")
+
+                                    except Exception as e:
+                                        print(f"⚠️  Error logging trades artifact: {e}")
 
                                 # Tag de sesión para agrupar ejecuciones (usa timestamp)
                                 current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -467,49 +471,50 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                             mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
                             mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
 
-                        # Log trades artifact
-                        try:
-                            trades_df = get_strategy_trades(
-                                df=train_df,
-                                indicator=indicator,
-                                params=params,
-                                position_type=position_type,
-                                use_next_open=use_next_open
-                            )
-                            if not trades_df.empty:
-                                # Sanitize run_name for filenames
-                                safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
-                                
-                                # 1. Save CSV
-                                csv_filename = f"trades_{safe_run_name}.csv"
-                                csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
-                                trades_df.to_csv(csv_path, index=False)
-                                mlflow.log_artifact(csv_path, artifact_path="trades")
-                                if os.path.exists(csv_path):
-                                    os.unlink(csv_path)
-
-                                # 2. Save Interactive Chart (Bokeh)
-                                try:
-                                    html_filename = f"viz_{safe_run_name}.html"
-                                    html_path = os.path.join(tempfile.gettempdir(), html_filename)
+                        # Log trades artifact (SOLO SI SE SOLICITA EXPLICITAMENTE)
+                        if log_artifacts:
+                            try:
+                                trades_df = get_strategy_trades(
+                                    df=train_df,
+                                    indicator=indicator,
+                                    params=params,
+                                    position_type=position_type,
+                                    use_next_open=use_next_open
+                                )
+                                if not trades_df.empty:
+                                    # Sanitize run_name for filenames
+                                    safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
                                     
-                                    chart_path = create_interactive_trade_chart(
-                                        df=train_df,
-                                        trades_df=trades_df,
-                                        title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
-                                        filename=html_path,
-                                        indicators=[{'indicator': indicator, 'params': params}]
-                                    )
-                                    
-                                    if chart_path:
-                                        mlflow.log_artifact(chart_path, artifact_path="plots")
-                                        if os.path.exists(chart_path):
-                                            os.unlink(chart_path)
-                                except Exception as viz_error:
-                                    print(f"⚠️  Error generating chart: {viz_error}")
+                                    # 1. Save CSV
+                                    csv_filename = f"trades_{safe_run_name}.csv"
+                                    csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
+                                    trades_df.to_csv(csv_path, index=False)
+                                    mlflow.log_artifact(csv_path, artifact_path="trades")
+                                    if os.path.exists(csv_path):
+                                        os.unlink(csv_path)
 
-                        except Exception as e:
-                            print(f"⚠️  Error logging trades artifact: {e}")
+                                    # 2. Save Interactive Chart (Bokeh)
+                                    try:
+                                        html_filename = f"viz_{safe_run_name}.html"
+                                        html_path = os.path.join(tempfile.gettempdir(), html_filename)
+                                        
+                                        chart_path = create_interactive_trade_chart(
+                                            df=train_df,
+                                            trades_df=trades_df,
+                                            title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
+                                            filename=html_path,
+                                            indicators=[{'indicator': indicator, 'params': params}]
+                                        )
+                                        
+                                        if chart_path:
+                                            mlflow.log_artifact(chart_path, artifact_path="plots")
+                                            if os.path.exists(chart_path):
+                                                os.unlink(chart_path)
+                                    except Exception as viz_error:
+                                        print(f"⚠️  Error generating chart: {viz_error}")
+
+                            except Exception as e:
+                                print(f"⚠️  Error logging trades artifact: {e}")
 
                         # Tag de sesión para agrupar ejecuciones (usa timestamp)
                         current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

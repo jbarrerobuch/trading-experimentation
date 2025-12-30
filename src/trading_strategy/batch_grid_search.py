@@ -183,14 +183,14 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     all_results = []
     
     if save_checkpoints:
-        print(f"\n🔍 Buscando checkpoints previos para '{experiment_name}'...")
+        print(f"\n🔍 Buscando checkpoints previos para '{experiment_name}' ({ticker})...")
         
-        # Regex para parsear: checkpoint_{experiment_name}_{session_id}_batch{batch_idx}.csv
+        # Regex para parsear: checkpoint_{experiment_name}_{ticker}_{session_id}_batch{batch_idx}.csv
         # session_id formato: YYYYMMDD_HHMMSS (15 chars)
-        # Usamos re.escape para el nombre del experimento por si tiene caracteres especiales
-        filename_pattern = re.compile(rf"checkpoint_{re.escape(experiment_name)}_(\d{{8}}_\d{{6}})_batch(\d+)\.csv")
+        # Usamos re.escape para el nombre del experimento y ticker por si tienen caracteres especiales
+        filename_pattern = re.compile(rf"checkpoint_{re.escape(experiment_name)}_{re.escape(ticker)}_(\d{{8}}_\d{{6}})_batch(\d+)\.csv")
         
-        checkpoint_files = list(checkpoint_dir.glob(f"checkpoint_{experiment_name}_*_batch*.csv")) # pyright: ignore[reportOptionalMemberAccess]
+        checkpoint_files = list(checkpoint_dir.glob(f"checkpoint_{experiment_name}_{ticker}_*_batch*.csv")) # pyright: ignore[reportOptionalMemberAccess]
         
         for cp_file in checkpoint_files:
             match = filename_pattern.match(cp_file.name)
@@ -278,7 +278,7 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
                 
                 # Guardar checkpoint con el ID de la sesión ACTUAL
                 if save_checkpoints:
-                    filename = f"checkpoint_{experiment_name}_{current_session_id}_batch{batch_idx}.csv"
+                    filename = f"checkpoint_{experiment_name}_{ticker}_{current_session_id}_batch{batch_idx}.csv"
                     checkpoint_file = checkpoint_dir / filename # pyright: ignore[reportOptionalOperand]
                     batch_results.to_csv(checkpoint_file, index=False)
                     print(f"  💾 Checkpoint guardado: {filename}")
@@ -404,8 +404,13 @@ def estimate_batch_requirements(strategy_configs, batch_size=10000):
         total_batches += n_batches
     
     # Estimaciones
-    avg_time_per_exp = 0.015  # 15ms por experimento (post-optimización)
-    total_time_seconds = total_experiments * avg_time_per_exp
+    # Tiempo base por experimento (backtest loop) - Ajustado a 50ms para ser más conservador
+    avg_time_per_exp = 0.05  
+    
+    # Overhead por batch (setup, logging, I/O, MLflow) - ~2 segundos por batch
+    overhead_per_batch = 2.0
+    
+    total_time_seconds = (total_experiments * avg_time_per_exp) + (total_batches * overhead_per_batch)
     
     memory_per_batch = batch_size * 0.5  # ~0.5KB por resultado
     peak_memory_mb = memory_per_batch / 1024  # Memoria peak por batch
@@ -414,7 +419,7 @@ def estimate_batch_requirements(strategy_configs, batch_size=10000):
     print(f"📈 TOTALES:")
     print(f"  Total experiments: {total_experiments:,}")
     print(f"  Total batches: {total_batches}")
-    print(f"  Estimated time: {total_time_seconds/60:.1f} min ({total_time_seconds/3600:.1f} hrs)")
+    print(f"  Estimated time: {total_time_seconds/60:.1f} min ({total_time_seconds/3600:.1f} hrs) per ticker/dataset")
     print(f"  Peak memory per batch: ~{peak_memory_mb:.1f} MB")
     print(f"  Total results size: ~{total_experiments * 0.5 / 1024:.1f} MB")
     
