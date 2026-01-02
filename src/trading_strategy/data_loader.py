@@ -72,7 +72,7 @@ def fetch_ohlcv_data(ticker, timeframes=['1h', '4h', '1d'], start_date='2017-08-
             while True:
                 ohlcv = exchange.fetch_ohlcv(
                     ticker, 
-                    timeframe=tf_ccxt, 
+                    timeframe=tf_ccxt,  # pyright: ignore[reportArgumentType]
                     since=current_timestamp,
                     limit=1000  # Máximo por request
                 )
