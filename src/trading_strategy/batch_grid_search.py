@@ -331,7 +331,7 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
         
         if strategy_type == 'combo':
             indicators_str = ', '.join([row.get(f'ind{i}_name', '?') 
-                                       for i in range(1, row.get('n_indicators', 0) + 1)])
+                                       for i in range(1, int(row.get('n_indicators', 0)) + 1)])
             print(f"\n{idx+1}. {row['strategy_name']} (COMBO: {indicators_str}) [Batch {batch_id} | {sess_id}]")
             print(f"   Method: {row['combination_method']}, Position: {row['position_type']}")
         else:
@@ -405,7 +405,7 @@ def estimate_batch_requirements(strategy_configs, batch_size=10000):
     
     # Estimaciones
     # Tiempo base por experimento (backtest loop) - Ajustado a 50ms para ser más conservador
-    avg_time_per_exp = 0.05  
+    avg_time_per_exp = 10
     
     # Overhead por batch (setup, logging, I/O, MLflow) - ~2 segundos por batch
     overhead_per_batch = 2.0
