@@ -72,3 +72,73 @@ def setup_mlflow(experiment_name: str = 'default', disable_gpu_metrics: bool = T
     except Exception as e:
         print(f"⚠️  Error configuring MLflow: {e}")
         return False
+
+def parse_combo_params(params: dict) -> list:
+    """
+    Reconstructs indicator structure for combo strategies from flat MLflow params.
+    
+    Args:
+        params: Dictionary of parameters from MLflow run.
+        
+    Returns:
+        List of dictionaries defining the indicators.
+    """
+    indicators_combo = []
+    
+    # Determine how many indicators there are
+    n_indicators = int(params.get('n_indicators', 0))
+    
+    for i in range(1, n_indicators + 1):
+        ind_name = params.get(f'ind{i}_name')
+        if not ind_name:
+            continue
+            
+        ind_params = {}
+        prefix = f'ind{i}_'
+        
+        for key, value in params.items():
+            if key.startswith(prefix) and key != f'{prefix}name':
+                param_name = key[len(prefix):]
+                # Try to convert to number if possible
+                try:
+                    if '.' in str(value):
+                        ind_params[param_name] = float(value)
+                    else:
+                        ind_params[param_name] = int(value)
+                except (ValueError, TypeError):
+                    ind_params[param_name] = value
+        
+        indicators_combo.append({
+            'indicator': ind_name,
+            'params': ind_params
+        })
+        
+    return indicators_combo
+
+def parse_single_params(params: dict) -> dict:
+    """
+    Cleans and converts parameters for single strategies.
+    
+    Args:
+        params: Dictionary of parameters from MLflow run.
+        
+    Returns:
+        Dictionary of cleaned parameters.
+    """
+    clean_params = {}
+    exclude_keys = {
+        'strategy_name', 'strategy_type', 'indicator', 'position_type', 
+        'train_split', 'ticker', 'timeframe', 'git_commit', 'session_id'
+    }
+    
+    for k, v in params.items():
+        if k not in exclude_keys and not k.startswith('ind'):
+            try:
+                if '.' in str(v):
+                    clean_params[k] = float(v)
+                else:
+                    clean_params[k] = int(v)
+            except (ValueError, TypeError):
+                clean_params[k] = v
+                
+    return clean_params
