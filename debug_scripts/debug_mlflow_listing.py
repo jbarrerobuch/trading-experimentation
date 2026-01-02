@@ -24,9 +24,9 @@ try:
         runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
         print(f"  Total Runs: {len(runs)}")
         
-        if not runs.empty:
+        if not runs.empty: # pyright: ignore[reportAttributeAccessIssue]
             print("  Sample Run Data (first 1):")
-            print(runs.iloc[0].to_dict())
+            print(runs.iloc[0].to_dict()) # pyright: ignore[reportAttributeAccessIssue]
         else:
             print("  No runs found in this experiment.")
 
