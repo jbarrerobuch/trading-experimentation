@@ -24,8 +24,8 @@ _CACHE_MAX_SIZE = 256  # Límite de entradas en cache
 
 def calculate_returns_and_momentum(
     df: pd.DataFrame, 
-    lookback_periods: List[int] = [5, 10, 20, 30, 60], 
-    lookforward_periods: List[int] = [2, 5, 10, 15, 20, 30, 60, 120], 
+    lookback_periods: List[int] = [10], 
+    lookforward_periods: List[int] = [], 
     compute_indicators: bool = True
 ) -> pd.DataFrame:
     """
@@ -60,9 +60,10 @@ def calculate_returns_and_momentum(
     df[f'{COL_FUTURE_RET}+1'] = df[COL_RETURNS].shift(-1)
     
     # Calcular retornos futuros para diferentes horizontes
-    for period in lookforward_periods:
-        df[f'{COL_FUTURE_RET}+{period}'] = df[COL_CLOSE].shift(-period) / df[COL_CLOSE] - 1
-    
+    if lookforward_periods:
+        for period in lookforward_periods:
+            df[f'{COL_FUTURE_RET}+{period}'] = df[COL_CLOSE].shift(-period) / df[COL_CLOSE] - 1
+        
     # Si solo queremos retornos (para grid search), retornar aquí
     if not compute_indicators:
         return df.dropna(subset=[COL_RETURNS, COL_LOG_RETURNS])
