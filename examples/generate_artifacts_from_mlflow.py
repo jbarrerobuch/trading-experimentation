@@ -8,7 +8,14 @@ import os
 import re
 import pandas as pd
 import mlflow
+from mlflow.tracking import MlflowClient
 from pathlib import Path
+
+# Fix unicode output on Windows
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8') # pyright: ignore[reportAttributeAccessIssue]
+
+print("Iniciando script de generación de artefactos...")
 
 # Agregar src/ al path
 current_file = Path(__file__).resolve()
@@ -22,85 +29,38 @@ from trading_strategy import (
     get_strategy_trades
 )
 from trading_strategy.utils.mlflow_viz import create_interactive_trade_chart
-from trading_strategy.utils.paths import get_project_root
+from trading_strategy.utils.mlflow_utils import (
+    setup_mlflow,
+    parse_combo_params,
+    parse_single_params
+)
 
 # ========== CONFIGURACIÓN ==========
-MLFLOW_DB_URI = f"sqlite:///{project_root}/mlflow.db"
-OUTPUT_DIR = project_root / 'data' / 'artifacts_generated'
+# Los artefactos se guardarán en data/mlruns/{run_id}/{plots|trades}
+
+# ID de Experimento para filtrar (None para buscar en todos)
+EXPERIMENT_ID = '2'
 
 # Filtros para seleccionar runs interesantes
-FILTER_STRING = (
-    "metrics.sharpe_ratio > 1.5 "
-    "AND tags.ticker = 'BTCUSDT' "
-    "AND tags.timeframe = '1h'"
-)
+FILTER_STRING = ""
+
 # Opcional: Lista de Run IDs específicos (si se define, ignora FILTER_STRING)
-SPECIFIC_RUN_IDS = [] 
+SPECIFIC_RUN_IDS = ["8c6ffdac38cb411d877e379fa605f1f2"] 
 
 # Máximo de runs a procesar (para evitar procesar miles por error)
 MAX_RUNS = 10
 
-def setup_mlflow():
-    mlflow.set_tracking_uri(MLFLOW_DB_URI)
-    print(f"🔌 Conectado a MLflow: {MLFLOW_DB_URI}")
-
-def parse_combo_params(params):
-    """Reconstruye la estructura de indicadores para estrategias combo desde params planos de MLflow"""
-    indicators_combo = []
-    
-    # Determinar cuántos indicadores hay
-    n_indicators = int(params.get('n_indicators', 0))
-    
-    for i in range(1, n_indicators + 1):
-        ind_name = params.get(f'ind{i}_name')
-        if not ind_name:
-            continue
-            
-        ind_params = {}
-        prefix = f'ind{i}_'
-        
-        for key, value in params.items():
-            if key.startswith(prefix) and key != f'{prefix}name':
-                param_name = key[len(prefix):]
-                # Intentar convertir a número si es posible
-                try:
-                    if '.' in value:
-                        ind_params[param_name] = float(value)
-                    else:
-                        ind_params[param_name] = int(value)
-                except ValueError:
-                    ind_params[param_name] = value
-        
-        indicators_combo.append({
-            'indicator': ind_name,
-            'params': ind_params
-        })
-        
-    return indicators_combo
-
-def parse_single_params(params):
-    """Limpia y convierte parámetros para estrategias individuales"""
-    clean_params = {}
-    exclude_keys = {
-        'strategy_name', 'strategy_type', 'indicator', 'position_type', 
-        'train_split', 'ticker', 'timeframe', 'git_commit', 'session_id'
-    }
-    
-    for k, v in params.items():
-        if k not in exclude_keys and not k.startswith('ind'):
-            try:
-                if '.' in v:
-                    clean_params[k] = float(v)
-                else:
-                    clean_params[k] = int(v)
-            except ValueError:
-                clean_params[k] = v
-                
-    return clean_params
-
 def main():
-    setup_mlflow()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Validar configuración inicial
+    if not EXPERIMENT_ID:
+        print("❌ Error: Debes especificar un EXPERIMENT_ID válido o una lista de SPECIFIC_RUN_IDS.")
+        return
+
+    # Configurar MLflow
+    if not setup_mlflow():
+        return
+    
+    client = MlflowClient()
     
     # Buscar runs
     if SPECIFIC_RUN_IDS:
@@ -111,14 +71,16 @@ def main():
             except Exception as e:
                 print(f"⚠️  No se encontró run {run_id}: {e}")
     else:
+        experiment_ids = [str(EXPERIMENT_ID)]
+        print(f"🔍 Buscando en experimento específico: {experiment_ids}")
+        
         print(f"🔍 Buscando runs con filtro: {FILTER_STRING}")
         runs = mlflow.search_runs(
+            experiment_ids=experiment_ids,
             filter_string=FILTER_STRING,
             max_results=MAX_RUNS,
             order_by=["metrics.sharpe_ratio DESC"]
         )
-        # Convertir DataFrame de runs a lista de objetos Run si es necesario, 
-        # pero search_runs devuelve DataFrame. Iteraremos sobre el DF.
     
     if isinstance(runs, pd.DataFrame):
         if runs.empty:
@@ -135,9 +97,15 @@ def main():
         # Convertir a formato similar para iterar
         runs_data = []
         for run in runs:
-            data = run.data.params
-            data.update(run.data.metrics)
-            data.update(run.data.tags)
+            data = {}
+            # Agregar prefijos para simular estructura de search_runs
+            for k, v in run.data.params.items():
+                data[f'params.{k}'] = v
+            for k, v in run.data.metrics.items():
+                data[f'metrics.{k}'] = v
+            for k, v in run.data.tags.items():
+                data[f'tags.{k}'] = v
+                
             data['run_id'] = run.info.run_id
             runs_data.append(data)
         runs_iter = pd.DataFrame(runs_data).iterrows()
@@ -209,15 +177,23 @@ def main():
             )
             
             if not trades_df.empty:
+                # Definir rutas de salida basadas en el run_id
+                run_root = project_root / 'data' / 'mlruns' / run_id # pyright: ignore[reportOperatorIssue]
+                trades_dir = run_root / 'trades'
+                plots_dir = run_root / 'plots'
+                
+                trades_dir.mkdir(parents=True, exist_ok=True)
+                plots_dir.mkdir(parents=True, exist_ok=True)
+
                 # Guardar CSV
-                safe_name = re.sub(r'[^\w\-]', '_', f"{strategy_name}_{run_id}")
-                csv_path = OUTPUT_DIR / f"trades_{safe_name}.csv"
+                safe_name = re.sub(r'[^\w\-]', '_', f"{strategy_name}")
+                csv_path = trades_dir / f"trades_{safe_name}.csv"
                 trades_df.to_csv(csv_path, index=False)
-                print(f"   💾 Trades guardados: {csv_path.name}")
+                print(f"   💾 Trades guardados: {csv_path}")
                 
                 # Generar Gráfico
                 print("   Generando gráfico interactivo...")
-                html_path = OUTPUT_DIR / f"viz_{safe_name}.html"
+                html_path = plots_dir / f"viz_{safe_name}.html"
                 
                 viz_indicators = indicators_combo if strategy_type == 'combo' else [{'indicator': indicator, 'params': strategy_params}]
                 
@@ -228,13 +204,16 @@ def main():
                     filename=str(html_path),
                     indicators=viz_indicators
                 )
-                print(f"   📈 Gráfico guardado: {html_path.name}")
+                print(f"   📈 Gráfico guardado: {html_path}")
                 
-                # Opcional: Loguear como artefacto al run original en MLflow
-                # print("   Subiendo artefactos a MLflow...")
-                # with mlflow.start_run(run_id=run_id):
-                #     mlflow.log_artifact(str(csv_path), artifact_path="generated_artifacts")
-                #     mlflow.log_artifact(str(html_path), artifact_path="generated_artifacts")
+                # Loguear como artefacto al run original en MLflow usando MlflowClient
+                print("   Subiendo artefactos a MLflow...")
+                try:
+                    client.log_artifact(run_id, str(csv_path), artifact_path="generated_artifacts")
+                    client.log_artifact(run_id, str(html_path), artifact_path="generated_artifacts")
+                    print("   ✓ Artefactos subidos a MLflow")
+                except Exception as e:
+                    print(f"   ⚠️  Error subiendo a MLflow: {e}")
                 
             else:
                 print("   ⚠️  No se generaron trades (estrategia no operó).")
