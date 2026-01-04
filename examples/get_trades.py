@@ -19,6 +19,7 @@ from src.trading_strategy import (
     get_strategy_trades,
     load_strategies_by_name
 )
+from src.trading_strategy.utils.stats import calculate_trade_statistics
 from src.trading_strategy.utils.paths import get_project_root
 
 def main():
@@ -146,16 +147,14 @@ def main():
                     )
                 
                 if not trades_df.empty:
-                    # Calcular métricas básicas del conjunto de trades
-                    total_trades = len(trades_df)
-                    win_rate = (trades_df['pnl_pct'] > 0).mean()
-                    avg_pnl = trades_df['pnl_pct'].mean()
-                    total_pnl = trades_df['pnl_pct'].sum()
+                    # Calcular métricas avanzadas usando el módulo centralizado
+                    stats = calculate_trade_statistics(trades_df)
                     
-                    print(f"  ✓ Trades generados: {total_trades}")
-                    print(f"  ✓ Win Rate: {win_rate:.1%}")
-                    print(f"  ✓ Avg PnL: {avg_pnl:.2%}")
-                    print(f"  ✓ Total PnL: {total_pnl:.2%}")
+                    print(f"  ✓ Trades generados: {stats['total_trades']}")
+                    print(f"  ✓ Win Rate: {stats['win_rate']:.1%}")
+                    print(f"  ✓ Sharpe Ratio: {stats['sharpe_ratio']:.2f}")
+                    print(f"  ✓ Max Drawdown: {stats['max_drawdown']:.2%}")
+                    print(f"  ✓ Total PnL: {stats['total_return']:.2%}")
                     
                     # Guardar CSV
                     filename = f"trades_{ticker}_{timeframe}_{strat_name}.csv"

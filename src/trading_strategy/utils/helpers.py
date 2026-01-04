@@ -94,42 +94,6 @@ def resample_ohlcv(df, timeframe='1D'):
     return resampled
 
 
-def calculate_trade_statistics(trades_df):
-    """
-    Calcula estadísticas detalladas de trades
-    
-    Parameters:
-    -----------
-    trades_df : DataFrame
-        DataFrame con columna 'returns' de cada trade
-    
-    Returns:
-    --------
-    dict : Diccionario con estadísticas de trading
-    """
-    returns = trades_df['returns']
-    
-    wins = returns[returns > 0]
-    losses = returns[returns < 0]
-    
-    stats = {
-        'total_trades': len(returns),
-        'winning_trades': len(wins),
-        'losing_trades': len(losses),
-        'win_rate': len(wins) / len(returns) if len(returns) > 0 else 0,
-        'avg_win': wins.mean() if len(wins) > 0 else 0,
-        'avg_loss': losses.mean() if len(losses) > 0 else 0,
-        'largest_win': wins.max() if len(wins) > 0 else 0,
-        'largest_loss': losses.min() if len(losses) > 0 else 0,
-        'profit_factor': wins.sum() / abs(losses.sum()) if len(losses) > 0 and losses.sum() != 0 else 0,
-        'risk_reward': abs(wins.mean() / losses.mean()) if len(losses) > 0 and losses.mean() != 0 else 0,
-        'total_return': returns.sum(),
-        'avg_return': returns.mean()
-    }
-    
-    return stats
-
-
 def format_strategy_config(strategy_name, indicator, params):
     """
     Formatea configuración de estrategia para display
