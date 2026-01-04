@@ -5,6 +5,7 @@ Handles configuration, database connection, and run naming.
 
 import os
 import sys
+import logging
 from pathlib import Path
 
 try:
@@ -63,6 +64,8 @@ def setup_mlflow(experiment_name: str = 'default', disable_gpu_metrics: bool = T
         
         # Intentar activar System Metrics nativos (MLflow 2.8+)
         try:
+            # Silenciar logs de system metrics
+            logging.getLogger("mlflow.system_metrics.system_metrics_monitor").setLevel(logging.WARNING)
             mlflow.enable_system_metrics_logging() # pyright: ignore[reportPossiblyUnboundVariable]
         except (AttributeError, Exception):
             pass # Versión antigua de MLflow o error de permisos
