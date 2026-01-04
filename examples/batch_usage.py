@@ -21,12 +21,15 @@ from src.trading_strategy.utils.paths import get_project_root, get_strategies_di
 
 # ========== CONSTANTES GLOBALES ==========
 # Nombre del experimento en MLflow (común para todos los tickers para facilitar comparación)
-EXPERIMENT_NAME = "ethusd_cci_trix"
+EXPERIMENT_NAME = "ETHUSDT_selection"
+BATCH_SIZE = 5000
 
 
 def main():
     # ========== CONFIGURACIÓN ==========
-    tickers = ['ETHUSDT']
+    tickers = [
+        'ETHUSDT'
+    ]
     timeframe = '1h'
     
     # ========== 1. CARGAR ESTRATEGIAS (Común para todos) ==========
@@ -34,11 +37,10 @@ def main():
     
     # Cargar todas las estrategias de la carpeta 'single'
     strategies_root = get_strategies_dir()
-    single_dir = os.path.join(strategies_root, 'single')
-    combo_dir = os.path.join(strategies_root, 'combo')
+    combo_dir = os.path.join(strategies_root, '')
     
     strategy_files = glob.glob(os.path.join(combo_dir, '*.yaml'))
-    strategy_names = [f"combo/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
+    strategy_names = [f"ETH_cci-trix/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
     strategy_names.sort()
     
     print(f"  Estrategias encontradas en: {len(strategy_names)}")
@@ -49,7 +51,7 @@ def main():
     
     # ========== 2. ESTIMAR RECURSOS ==========
     print("\n🔍 Estimando recursos necesarios...")
-    estimate_batch_requirements(configs, batch_size=10000)
+    estimate_batch_requirements(configs, batch_size=BATCH_SIZE)
     
     # ========== 3. PREPARAR DIRECTORIOS ==========
     checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_checkpoints')
@@ -105,7 +107,7 @@ def main():
         results = batch_grid_search(
             df=df,
             strategy_configs=configs,
-            batch_size=10000,          # 10K experimentos por batch
+            batch_size=BATCH_SIZE,          # 10K experimentos por batch
             use_mlflow=True,            # Registrar en MLflow
             ticker=ticker,
             timeframe=timeframe,
@@ -195,8 +197,9 @@ def main():
                         if col not in exclude_cols and not pd.isna(row[col]):
                              params[col] = row[col]
 
-                # Exportar trades para el Top 5
-                if idx <= 5:
+                # Exportar trades para el Top 5 (DESACTIVADO POR DEFECTO)
+                # Para generar trades, usar el script examples/generate_artifacts_from_mlflow.py
+                if False and idx <= 5:
                     try:
                         trades_df = get_strategy_trades(
                             df=df,
