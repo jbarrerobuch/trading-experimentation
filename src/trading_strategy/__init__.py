@@ -16,6 +16,7 @@ from .batch_grid_search import (
     batch_grid_search,
     estimate_batch_requirements
 )
+from .walk_forward import walk_forward_optimization
 from .visualization import visualize_grid_search_results, export_best_strategies
 from .strategy_loader import (
     load_strategy_config,
@@ -45,6 +46,7 @@ __all__ = [
     'strategy_grid_search',
     'batch_grid_search',
     'estimate_batch_requirements',
+    'walk_forward_optimization',
     
     # Visualization
     'visualize_grid_search_results',
