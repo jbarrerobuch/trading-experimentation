@@ -186,6 +186,11 @@ def walk_forward_optimization(
     try:
         while train_end_idx + step_size <= n_candles:
             step_count += 1
+            
+            # Iniciar Nested Run para este paso
+            if use_mlflow and MLFLOW_AVAILABLE:
+                mlflow.start_run(run_name=f"Step_{step_count}", nested=True)
+            
             test_end_idx = train_end_idx + step_size
             
             # Definir slices de datos
@@ -432,20 +437,57 @@ def walk_forward_optimization(
                         use_next_open=use_next_open
                     )
                     params_log = params_dict
-                    
+                
+                # Generar nombre descriptivo para el run y los trades
+                from .utils.helpers import generate_run_name
+                
+                if strategy_type == 'combo':
+                    descriptive_name = generate_run_name(
+                        strategy_name=strat_name,
+                        strategy_type='combo',
+                        position_type=best_row['position_type'],
+                        indicators_combo=indicators_combo,
+                        combination_method=best_row['combination_method']
+                    )
+                else:
+                    descriptive_name = generate_run_name(
+                        strategy_name=strat_name,
+                        strategy_type='single',
+                        position_type=best_row['position_type'],
+                        params=params_dict
+                    )
+                
+                # Actualizar nombre del Run en MLflow
+                if use_mlflow and MLFLOW_AVAILABLE:
+                    mlflow.set_tag("mlflow.runName", descriptive_name)
+
                 # Registrar resultados
                 # FILTRAR TRADES: Solo mantener los que ocurrieron en el periodo de prueba real (sin warmup)
                 step_pnl = 0.0
                 n_trades_step = 0
+                step_metrics = {}
                 
                 if not trades.empty:
                     test_start_time = df.index[train_end_idx]
                     trades = trades[trades['entry_time'] >= test_start_time].copy()
                 
                 if not trades.empty:
+                    # Agregar metadatos a los trades para análisis posterior
+                    trades['step'] = step_count
+                    trades['strategy_name'] = descriptive_name
+                    trades['train_start'] = train_df.index[0]
+                    trades['train_end'] = train_df.index[-1]
+                    
+                    # Aplanar params para el CSV de trades (string representation)
+                    trades['strategy_params'] = str(params_log)
+                    
                     oos_trades_all.append(trades)
                     step_pnl = trades['pnl_pct'].sum()
                     n_trades_step = len(trades)
+                    
+                    # Calcular métricas detalladas del paso OOS
+                    step_metrics = calculate_trade_statistics(trades, initial_capital=10000.0)
+                    
                     print(f"   📊 OOS Result: {n_trades_step} trades | PnL: {step_pnl:.2%}")
                 else:
                     print(f"   📊 OOS Result: 0 trades")
@@ -462,21 +504,69 @@ def walk_forward_optimization(
                     'params': str(params_log)
                 })
                 
-                # Log progresivo en MLflow
+                # Log progresivo en MLflow (Nested Run)
                 if use_mlflow and MLFLOW_AVAILABLE:
-                    mlflow.log_metrics({ # pyright: ignore[reportPossiblyUnboundVariable]
-                        "step_oos_pnl": step_pnl,
-                        "step_oos_trades": float(n_trades_step),
-                        "step_is_score": best_score
-                    }, step=step_count)
+                    # 1. Log Metrics (IS y OOS)
+                    metrics_to_log = {
+                        "is_score": best_score,
+                        "oos_pnl": step_pnl,
+                        "oos_trades": float(n_trades_step)
+                    }
                     
-                    # Loguear parámetros ganadores como texto para este paso
-                    mlflow.log_text(str(params_log), f"step_{step_count}_params.txt") # pyright: ignore[reportPossiblyUnboundVariable]
+                    # Agregar métricas IS detalladas si están disponibles en best_row
+                    # Prefijo 'is_' para diferenciar
+                    is_metric_cols = [
+                        'sharpe_ratio', 'total_return', 'max_drawdown', 'win_rate', 
+                        'profit_factor', 'sqn', 'sortino_ratio', 'calmar_ratio'
+                    ]
+                    for col in is_metric_cols:
+                        if col in best_row:
+                            metrics_to_log[f"is_{col}"] = float(best_row[col])
+                            
+                    # Agregar métricas OOS detalladas calculadas
+                    # Prefijo 'oos_' para diferenciar (excepto las que ya agregamos manualmente)
+                    for k, v in step_metrics.items():
+                        if k not in ['total_trades', 'total_return']: # Ya logueados o redundantes
+                            metrics_to_log[f"oos_{k}"] = float(v)
+                            
+                    mlflow.log_metrics(metrics_to_log)
+                    
+                    # 2. Log Params (Aplanados y legibles)
+                    flat_params = {
+                        "step": step_count,
+                        "train_start": str(train_df.index[0]),
+                        "train_end": str(train_df.index[-1]),
+                        "test_start": str(df.index[train_end_idx]),
+                        "test_end": str(df.index[test_end_idx-1]),
+                        "best_strategy_name": strat_name
+                    }
+                    
+                    # Aplanar params_log (especialmente para combos)
+                    if 'indicators' in params_log and isinstance(params_log['indicators'], list):
+                        # Es un combo
+                        flat_params['combination_method'] = params_log.get('method', 'Unknown')
+                        for i, ind in enumerate(params_log['indicators']):
+                            flat_params[f'ind{i+1}_name'] = ind['indicator']
+                            for p_name, p_val in ind.get('params', {}).items():
+                                flat_params[f'ind{i+1}_{p_name}'] = str(p_val)
+                    else:
+                        # Es single o params planos
+                        for k, v in params_log.items():
+                            flat_params[k] = str(v)
+                            
+                    mlflow.log_params(flat_params)
+                    
+                    # También loguear como texto raw
+                    mlflow.log_text(str(params_log), "params_raw.txt")
                 
             except Exception as e:
                 print(f"   ❌ Error en OOS execution: {e}")
                 import traceback
                 traceback.print_exc()
+
+            # Cerrar Nested Run
+            if use_mlflow and MLFLOW_AVAILABLE:
+                mlflow.end_run()
 
             # Avanzar ventanas
             start_idx += step_size
