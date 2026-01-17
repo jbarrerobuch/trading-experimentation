@@ -1,8 +1,0 @@
-name: "Williams %R Basic Strategy"
-type: "single"
-indicator: "willr"
-params_grid:
-  period: [14, 20, 30]
-  high_threshold: [-20, -10]
-  low_threshold: [-80, -90]
-  position_type: ["long", "short", "both"]

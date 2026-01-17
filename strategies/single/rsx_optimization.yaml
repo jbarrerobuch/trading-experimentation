@@ -1,6 +1,0 @@
-name: "RSX Basic Strategy"
-type: "single"
-indicator: "rsx"
-params_grid:
-  period: [14, 20, 30]
-  position_type: ["long", "short", "both"]

@@ -1,5 +1,0 @@
-name: "Balance of Power Basic Strategy"
-type: "single"
-indicator: "bop"
-params_grid:
-  position_type: ["long", "short", "both"]

@@ -1,6 +1,0 @@
-name: "Rate of Change Basic Strategy"
-type: "single"
-indicator: "roc"
-params_grid:
-  period: [10, 14, 20, 30]
-  position_type: ["long", "short", "both"]

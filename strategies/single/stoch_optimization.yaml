@@ -1,8 +1,0 @@
-name: "Stochastic Basic Strategy"
-type: "single"
-indicator: "stoch"
-params_grid:
-  k: [14, 20, 30]
-  d: [3, 5]
-  smooth_k: [3, 5]
-  position_type: ["long", "short", "both"]

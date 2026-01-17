@@ -1,6 +1,0 @@
-name: "Slope Basic Strategy"
-type: "single"
-indicator: "slope"
-params_grid:
-  period: [5, 10, 20, 30]
-  position_type: ["long", "short", "both"]

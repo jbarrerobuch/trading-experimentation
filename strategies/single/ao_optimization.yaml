@@ -1,7 +1,0 @@
-name: "Awesome Oscillator Basic Strategy"
-type: "single"
-indicator: "ao"
-params_grid:
-  fast: [5, 10]
-  slow: [34, 50]
-  position_type: ["long", "short", "both"]
