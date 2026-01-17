@@ -23,24 +23,24 @@ from src.trading_strategy.utils.paths import get_project_root, get_strategies_di
 # Nombre del experimento en MLflow (común para todos los tickers para facilitar comparación)
 EXPERIMENT_NAME = "ETHUSDT_selection"
 BATCH_SIZE = 5000
+STRATEGY_FOLDER = 'ETH_cci-trix'
+TICKERS = ['ETHUSDT']
+TIMEFRAME = '1h'
 
 
 def main():
     # ========== CONFIGURACIÓN ==========
-    tickers = [
-        'ETHUSDT'
-    ]
-    timeframe = '1h'
+    # Usando constantes globales definidas arriba
     
     # ========== 1. CARGAR ESTRATEGIAS (Común para todos) ==========
     print("\n📋 Cargando configuraciones de estrategias...")
     
-    # Cargar todas las estrategias de la carpeta 'single'
+    # Cargar todas las estrategias de la carpeta especificada
     strategies_root = get_strategies_dir()
-    combo_dir = os.path.join(strategies_root, '')
+    strategy_dir = os.path.join(strategies_root, STRATEGY_FOLDER)
     
-    strategy_files = glob.glob(os.path.join(combo_dir, '*.yaml'))
-    strategy_names = [f"ETH_cci-trix/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
+    strategy_files = glob.glob(os.path.join(strategy_dir, '*.yaml'))
+    strategy_names = [f"{STRATEGY_FOLDER}/{os.path.splitext(os.path.basename(f))[0]}" for f in strategy_files]
     strategy_names.sort()
     
     print(f"  Estrategias encontradas en: {len(strategy_names)}")
@@ -60,26 +60,26 @@ def main():
     import datetime
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     
-    input(f"⏸️  Presiona ENTER para iniciar batch grid search para {tickers} (o Ctrl+C para cancelar)...")
+    input(f"⏸️  Presiona ENTER para iniciar batch grid search para {TICKERS} (o Ctrl+C para cancelar)...")
     
     # ========== 4. PROCESAR CADA ACTIVO ==========
-    for ticker in tickers:
+    for ticker in TICKERS:
         print("\n" + "="*80)
-        print(f"🚀 PROCESANDO {ticker} ({timeframe})")
+        print(f"🚀 PROCESANDO {ticker} ({TIMEFRAME})")
         print("="*80)
         
         # Cargar datos
         print(f"📥 Cargando datos para {ticker}...")
         data = load_saved_data(
             ticker=ticker,
-            timeframes=[timeframe]
+            timeframes=[TIMEFRAME]
         )
         
-        if not data or timeframe not in data:
-            print(f"❌ No se encontraron datos para {ticker} {timeframe}")
+        if not data or TIMEFRAME not in data:
+            print(f"❌ No se encontraron datos para {ticker} {TIMEFRAME}")
             continue
 
-        df = data[timeframe]
+        df = data[TIMEFRAME]
         print(f"✓ Datos cargados: {len(df)} velas")
         print(f"  Periodo: {df.index[0]} - {df.index[-1]}")
         
@@ -102,7 +102,7 @@ def main():
         # Preparar directorio de salida
         results_dir = os.path.join(get_project_root(), 'data', 'final_results')
         os.makedirs(results_dir, exist_ok=True)
-        output_file = os.path.join(results_dir, f"batch_results_{ticker}_{timeframe}_{start_date}-{end_date}_summary_{date_str}.csv")
+        output_file = os.path.join(results_dir, f"batch_results_{ticker}_{TIMEFRAME}_{start_date}-{end_date}_summary_{date_str}.csv")
         
         results = batch_grid_search(
             df=df,
@@ -110,7 +110,7 @@ def main():
             batch_size=BATCH_SIZE,          # 10K experimentos por batch
             use_mlflow=True,            # Registrar en MLflow
             ticker=ticker,
-            timeframe=timeframe,
+            timeframe=TIMEFRAME,
             experiment_name=EXPERIMENT_NAME,
             save_checkpoints=True,      # Guardar checkpoints intermedios
             checkpoint_dir=checkpoint_dir,
@@ -211,7 +211,7 @@ def main():
                         )
                         
                         if not trades_df.empty:
-                            trades_file = os.path.join(trades_dir, f"trades_{ticker}_{timeframe}_rank{idx}_{date_str}.csv")
+                            trades_file = os.path.join(trades_dir, f"trades_{ticker}_{TIMEFRAME}_rank{idx}_{date_str}.csv")
                             trades_df.to_csv(trades_file, index=False)
                             print(f"   💾 Trades exportados: {os.path.basename(trades_file)}")
                     except Exception as e:

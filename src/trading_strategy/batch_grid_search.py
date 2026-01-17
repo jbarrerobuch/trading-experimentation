@@ -9,6 +9,14 @@ import datetime
 import pandas as pd
 from pathlib import Path
 from itertools import product, islice
+
+# Intentar importar tqdm para barra de progreso
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    
 from .grid_search import strategy_grid_search
 from .utils.paths import get_project_root
 
@@ -229,21 +237,36 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
     # ==========================================
     start_time = time.time()
     
-    for batch_idx, batch_config in enumerate(all_batch_configs, 1):
-        # Verificar si ya está completado
-        if batch_idx in completed_batches:
-            # Ya lo cargamos arriba
-            continue
-
+    # Identificar batches pendientes
+    pending_batches = []
+    for idx, config in enumerate(all_batch_configs, 1):
+        if idx not in completed_batches:
+            pending_batches.append((idx, config))
+            
+    print(f"\n🚀 Iniciando ejecución de {len(pending_batches)} batches pendientes...")
+    
+    # Configurar iterador (con tqdm si está disponible)
+    iterator = pending_batches
+    if TQDM_AVAILABLE:
+        iterator = tqdm(pending_batches, desc="Progreso Total", unit="batch", smoothing=0.1)
+        
+    for batch_idx, batch_config in iterator:
         batch_start = time.time()
         strategy_name = batch_config.get('name', 'unnamed')
         batch_id = batch_config.get('_batch_id', 0)
         total_strategy_batches = batch_config.get('_total_batches', 1)
         
-        print(f"\n{'─'*80}")
-        print(f"📦 BATCH {batch_idx}/{total_batches}")
-        print(f"   Strategy: {strategy_name} (batch {batch_id+1}/{total_strategy_batches})")
-        print(f"{'─'*80}")
+        # Log visual
+        info_str = f"Batch {batch_idx}/{total_batches} | Strat: {strategy_name} ({batch_id+1}/{total_strategy_batches})"
+        
+        if TQDM_AVAILABLE:
+            # Actualizar descripción de tqdm para mostrar qué está procesando
+            iterator.set_postfix_str(f"curr: {strategy_name}", refresh=True) # pyright: ignore
+        else:
+            # Fallback a prints si no hay tqdm
+            print(f"\n{'─'*80}")
+            print(f"📦 {info_str}")
+            print(f"{'─'*80}")
         
         try:
             # Ejecutar grid search para este batch
@@ -265,30 +288,44 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
                 all_results.append(batch_results)
                 
                 batch_elapsed = time.time() - batch_start
-                total_elapsed = time.time() - start_time
+                # ETA y Timing handled by tqdm automatically if available
                 
-                # Calcular ETA basado solo en los batches ejecutados en esta sesión
-                batches_run_so_far = len([b for b in range(1, batch_idx+1) if b not in completed_batches])
-                if batches_run_so_far > 0:
-                    avg_time = total_elapsed / batches_run_so_far
-                    remaining_batches = total_batches - batch_idx
-                    eta = avg_time * remaining_batches
+                if not TQDM_AVAILABLE:
+                    # Cálculo manual si no hay tqdm
+                    total_elapsed = time.time() - start_time
+                    batches_run_so_far = len([b for b in range(1, batch_idx+1) if b not in completed_batches]) # Nota: esto es aproximado si el orden cambia
+                    if batches_run_so_far > 0:
+                         # Ajustar lógica para pending_batches si fuera necesario, pero para fallback básico está bien
+                        pass
                     print(f"\n✓ Batch completado en {batch_elapsed:.1f}s")
-                    print(f"  ETA restante: {eta:.0f}s ({eta/60:.1f}min)")
                 
                 # Guardar checkpoint con el ID de la sesión ACTUAL
                 if save_checkpoints:
                     filename = f"checkpoint_{experiment_name}_{ticker}_{current_session_id}_batch{batch_idx}.csv"
                     checkpoint_file = checkpoint_dir / filename # pyright: ignore[reportOptionalOperand]
                     batch_results.to_csv(checkpoint_file, index=False)
-                    print(f"  💾 Checkpoint guardado: {filename}")
+                    
+                    msg = f"  💾 Checkpoint guardado: {filename}"
+                    if TQDM_AVAILABLE:
+                        tqdm.write(msg) # pyright: ignore
+                    else:
+                        print(msg)
             
             else:
-                print(f"\n⚠️  Batch {batch_idx} sin resultados válidos")
+                msg = f"⚠️  Batch {batch_idx} sin resultados válidos"
+                if TQDM_AVAILABLE:
+                    tqdm.write(msg) # pyright: ignore
+                else:
+                    print(f"\n{msg}")
         
         except Exception as e:
-            print(f"\n❌ ERROR en batch {batch_idx}: {str(e)}")
-            print(f"   Continuando con siguiente batch...")
+            err_msg = f"❌ ERROR en batch {batch_idx}: {str(e)}"
+            if TQDM_AVAILABLE:
+                tqdm.write(err_msg) # pyright: ignore
+                tqdm.write("   Continuando con siguiente batch...") # pyright: ignore
+            else:
+                print(f"\n{err_msg}")
+                print(f"   Continuando con siguiente batch...")
             continue
     
     # Consolidar todos los resultados

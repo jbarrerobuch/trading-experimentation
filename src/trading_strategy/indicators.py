@@ -410,11 +410,12 @@ def calculate_indicator_and_signals(
 
     elif indicator == 'cci':
         period = int(params.get('period', 20))
+        threshold = float(params.get('threshold', 100))
         cci = ta.cci(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
         if cci is not None:
             df['indicator_value'] = cci
-            df[COL_SIGNAL] = np.where(df['indicator_value'] > 100, -1,
-                                   np.where(df['indicator_value'] < -100, 1, 0))
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > threshold, -1,
+                                   np.where(df['indicator_value'] < -threshold, 1, 0))
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
                 calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
@@ -423,12 +424,12 @@ def calculate_indicator_and_signals(
 
     elif indicator == 'er':
         period = int(params.get('period', 10))
+        threshold = float(params.get('threshold', 0.3))
         er = ta.er(df[COL_CLOSE], length=period)
         if er is not None:
             df['indicator_value'] = er
             # ER is efficiency ratio, usually used for trend strength. 
-            # Signal logic from calculate_returns_and_momentum: > 0.3 -> 1, else -1
-            df[COL_SIGNAL] = np.where(df['indicator_value'] > 0.3, 1, -1)
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > threshold, 1, -1)
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
                 calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
@@ -437,11 +438,13 @@ def calculate_indicator_and_signals(
 
     elif indicator == 'inertia':
         period = int(params.get('period', 20))
+        upper = float(params.get('upper', 60))
+        lower = float(params.get('lower', 40))
         inertia = ta.inertia(df[COL_CLOSE], df[COL_HIGH], df[COL_LOW], length=period)
         if inertia is not None:
             df['indicator_value'] = inertia
-            df[COL_SIGNAL] = np.where(df['indicator_value'] > 60, 1,
-                                   np.where(df['indicator_value'] < 40, -1, 0))
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > upper, 1,
+                                   np.where(df['indicator_value'] < lower, -1, 0))
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
                 calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
@@ -450,11 +453,13 @@ def calculate_indicator_and_signals(
 
     elif indicator == 'rsx':
         period = int(params.get('period', 14))
+        overbought = float(params.get('overbought', 70))
+        oversold = float(params.get('oversold', 30))
         rsx = ta.rsx(df[COL_CLOSE], length=period)
         if rsx is not None:
             df['indicator_value'] = rsx
-            df[COL_SIGNAL] = np.where(df['indicator_value'] > 70, -1,
-                                   np.where(df['indicator_value'] < 30, 1, 0))
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > overbought, -1,
+                                   np.where(df['indicator_value'] < oversold, 1, 0))
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
                 calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
@@ -488,10 +493,11 @@ def calculate_indicator_and_signals(
                     calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
             else:
                 df[COL_SIGNAL] = 0
-        else:
-            df[COL_SIGNAL] = 0
-
-    elif indicator == 'uo':
+        threshold = float(params.get('threshold', 50))
+        uo = ta.uo(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE])
+        if uo is not None:
+            df['indicator_value'] = uo
+            df[COL_SIGNAL] = np.where(df['indicator_value'] > threshold)
         uo = ta.uo(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE])
         if uo is not None:
             df['indicator_value'] = uo
@@ -559,6 +565,154 @@ def calculate_indicator_and_signals(
             if use_cache:
                 calculated_columns['indicator_value'] = df['indicator_value'].copy()
                 calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'bbp':
+        # Bollinger Bands %B
+        period = int(params.get('period', 20))
+        std_dev = float(params.get('std_dev', 2.0))
+        # Thresholds for mean reversion: < 0 (oversold/buy), > 1 (overbought/sell)
+        # Or flexible thresholds
+        lower_thresh = float(params.get('lower_threshold', 0.0))
+        upper_thresh = float(params.get('upper_threshold', 1.0))
+        
+        bb = ta.bbands(df[COL_CLOSE], length=period, std=std_dev) # pyright: ignore[reportArgumentType]
+        if bb is not None:
+            # Columns are typically BBL_20_2.0, BBM_20_2.0, BBU_20_2.0, BBB_20_2.0, BBP_20_2.0
+            bbp_col = next((c for c in bb.columns if c.startswith('BBP_')), None)
+            if bbp_col:
+                df['indicator_value'] = bb[bbp_col]
+                # Reversal logic: Buy if < lower_thresh, Sell if > upper_thresh
+                df[COL_SIGNAL] = np.where(df['indicator_value'] > upper_thresh, -1,
+                                       np.where(df['indicator_value'] < lower_thresh, 1, 0))
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'supertrend':
+        period = int(params.get('period', 10))
+        multiplier = float(params.get('multiplier', 3.0))
+        
+        st = ta.supertrend(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period, multiplier=multiplier)
+        if st is not None:
+            # Columns: SUPERT_7_3.0, SUPERTd_7_3.0, SUPERTl_7_3.0, SUPERTs_7_3.0
+            # SUPERTd is direction: 1 (bull), -1 (bear)
+            trend_col = next((c for c in st.columns if c.startswith('SUPERTd_')), None)
+            if trend_col:
+                df['indicator_value'] = st[trend_col]
+                df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'psar':
+        af0 = float(params.get('af0', 0.02))
+        af = float(params.get('af', 0.02))
+        max_af = float(params.get('max_af', 0.2))
+        
+        psar = ta.psar(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], af0=af0, af=af, max_af=max_af)
+        if psar is not None:
+            # Columns: PSARl_0.02_0.2, PSARs_0.02_0.2, PSARaf_0.02_0.2, PSARr_0.02_0.2
+            # PSARl (long), PSARs (short). They are combined or separate.
+            # Usually we compare close to PSAR. 
+            # pandas-ta often returns separate columns where one is NaN.
+            # A common trick is to check which one is active.
+            # Or use PSARr (reversal) boolean column?
+            # Simpler: If Close > PSAR (active) -> Bull.
+            # Let's combine L and S columns.
+            long_col = next((c for c in psar.columns if c.startswith('PSARl_')), None)
+            short_col = next((c for c in psar.columns if c.startswith('PSARs_')), None)
+            
+            if long_col and short_col:
+                # Fill NaNs to combine
+                psar_val = psar[long_col].fillna(psar[short_col])
+                df['indicator_value'] = psar_val
+                df[COL_SIGNAL] = np.where(df[COL_CLOSE] > df['indicator_value'], 1, -1)
+                
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'vortex':
+        period = int(params.get('period', 14))
+        vortex = ta.vortex(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], length=period)
+        if vortex is not None:
+            # VTXp_14 (plus), VTXm_14 (minus)
+            plus_col = next((c for c in vortex.columns if c.startswith('VTXp_')), None)
+            minus_col = next((c for c in vortex.columns if c.startswith('VTXm_')), None)
+            
+            if plus_col and minus_col:
+                df['vortex_plus'] = vortex[plus_col]
+                df['vortex_minus'] = vortex[minus_col]
+                df['indicator_value'] = df['vortex_plus'] - df['vortex_minus'] # Diff
+                df[COL_SIGNAL] = np.where(df['vortex_plus'] > df['vortex_minus'], 1, -1)
+                
+                if use_cache:
+                    calculated_columns['vortex_plus'] = df['vortex_plus'].copy()
+                    calculated_columns['vortex_minus'] = df['vortex_minus'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'aroon':
+        period = int(params.get('period', 14))
+        aroon = ta.aroon(df[COL_HIGH], df[COL_LOW], length=period)
+        if aroon is not None:
+            # AROOND_14 (down), AROONU_14 (up), AROONOSC_14 (oscillator)
+            osc_col = next((c for c in aroon.columns if c.startswith('AROONOSC_')), None)
+            
+            if osc_col:
+                df['indicator_value'] = aroon[osc_col]
+                # Oscillator > 0 means Up > Down
+                df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+                
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        else:
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'fisher':
+        period = int(params.get('period', 9))
+        signal_period = int(params.get('signal', 1))
+        fisher = ta.fisher(df[COL_HIGH], df[COL_LOW], length=period, signal=signal_period)
+        if fisher is not None:
+            # FISHERT_9_1, FISHERTs_9_1
+            fisher_col = next((c for c in fisher.columns if c.startswith('FISHERT_') and not c.startswith('FISHERTs_')), None)
+            signal_col = next((c for c in fisher.columns if c.startswith('FISHERTs_')), None)
+            
+            if fisher_col:
+                df['indicator_value'] = fisher[fisher_col]
+                # Signal: Crossover (if signal available) or just simple > 0 vs < 0
+                if signal_col and signal_period > 1:
+                     df['fisher_signal'] = fisher[signal_col]
+                     df[COL_SIGNAL] = np.where(df['indicator_value'] > df['fisher_signal'], 1, -1)
+                else:
+                    # Simple zero line cross if no signal line smoothing
+                    df[COL_SIGNAL] = np.where(df['indicator_value'] > 0, 1, -1)
+                
+                if use_cache:
+                    calculated_columns['indicator_value'] = df['indicator_value'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
         else:
             df[COL_SIGNAL] = 0
 

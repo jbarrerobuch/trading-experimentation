@@ -11,6 +11,7 @@ import datetime
 import subprocess
 import tempfile
 import pandas as pd
+import numpy as np
 from itertools import product
 from .backtesting import backtest_strategy, get_strategy_trades
 from .utils.mlflow_utils import setup_mlflow
@@ -89,6 +90,7 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
     DataFrame con resultados de todas las combinaciones
     Incluye columnas 'ticker' y 'timeframe' para análisis multi-asset
     """
+    import numpy as np  # Ensure numpy is available
     all_results = []
     
     # Normalizar ticker y timeframe
@@ -277,7 +279,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                                         mlflow.log_param(f"ind{idx+1}_{param_name}", param_value)
                                 
                                 for metric_name, metric_value in metrics.items():
-                                    mlflow.log_metric(metric_name, metric_value)
+                                    if isinstance(metric_value, (int, float, np.integer, np.floating)):
+                                        mlflow.log_metric(metric_name, metric_value)
                                 
                                 mlflow.set_tag("ticker", ticker_normalized)
                                 mlflow.set_tag("timeframe", timeframe_normalized)
@@ -418,7 +421,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT'
                             mlflow.log_param(param_name, param_value)
                         
                         for metric_name, metric_value in metrics.items():
-                            mlflow.log_metric(metric_name, metric_value)
+                            if isinstance(metric_value, (int, float, np.integer, np.floating)):
+                                mlflow.log_metric(metric_name, metric_value)
                         
                         mlflow.set_tag("ticker", ticker_normalized)
                         mlflow.set_tag("timeframe", timeframe_normalized)
