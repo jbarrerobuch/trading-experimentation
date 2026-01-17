@@ -87,8 +87,7 @@ def main():
         experiment_name='ethusd_cci-trix',
         commission=0.00025,  # 0.025%
         slippage=0.01,   # 1%
-        use_next_open=False,
-        train_split_ratio=0.7 # 70% Train, 30% Test
+        use_next_open=False
     )
     
     # ========== 5. ANÁLISIS DE RESULTADOS ==========
