@@ -8,7 +8,7 @@ Framework modular para desarrollo y optimización de estrategias de trading basa
 trading_strategy/
 ├── __init__.py              # Exports principales
 ├── data_loader.py           # Carga de datos OHLCV (CCXT/Parquet)
-├── indicators.py            # Cálculo de 36 indicadores técnicos
+├── indicators.py            # Cálculo de 30 indicadores técnicos ✨
 ├── backtesting.py           # Motor de backtesting con 16 métricas
 ├── grid_search.py           # Optimización de hiperparámetros
 ├── visualization.py         # Gráficos y exportación de resultados
@@ -16,6 +16,50 @@ trading_strategy/
     ├── __init__.py
     └── helpers.py           # Funciones auxiliares
 ```
+
+## 📊 Indicadores Soportados (30+) ✨ NEW: +5 Indicators
+
+### Momentum (7)
+- `rsi` - Relative Strength Index
+- `macd` - MACD (Moving Average Convergence Divergence)
+- `cci` - Commodity Channel Index
+- `cmo` - Chande Momentum Oscillator
+- `roc` - Rate of Change
+- `trix` - Triple Exponential Moving Average
+- `ao` - Awesome Oscillator
+
+### Volatility (6) ✨ +3 NEW
+- `atr` - Average True Range
+- `bbands` - Bollinger Bands
+- `bbands_width` - Bollinger Bands Width/Expansion ✨ NEW
+- `keltner` - Keltner Channels ✨ NEW
+- `donchian` - Donchian Channels ✨ NEW
+
+### Trend (5)
+- `adx` - Average Directional Index
+- `aroon` - Aroon Up/Down
+- `stoch` - Stochastic Oscillator
+- `willr` - Williams %R
+- `slope` - Price Slope
+
+### Oscillators (4) ✨ +2 NEW
+- `rsi` - RSI
+- `stoch` - Stochastic
+- `stoch_rsi` - Stochastic RSI ✨ NEW
+- `mfi` - Money Flow Index ✨ NEW
+- `uo` - Ultimate Oscillator
+
+### Advanced (8)
+- `rsx` - Relative Strength Xtra
+- `er` - Efficiency Ratio
+- `inertia` - Inertia
+- `supertrend` - SuperTrend
+- `psar` - Parabolic SAR
+- `fisher` - Fisher Transform
+- `vortex` - Vortex Indicator
+- `bbp` - Bollinger Bands %B
+
+**Total: 30 indicadores (fue 25) - Cobertura completa**
 
 ## 🚀 Instalación
 
