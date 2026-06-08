@@ -780,28 +780,33 @@ def calculate_indicator_and_signals(
             bb = ta.bbands(df[COL_CLOSE], length=period, std=std_dev)
             
             if bb is not None and not bb.empty:
-                bb_upper = bb.iloc[:, 0]
-                bb_lower = bb.iloc[:, 1]
-                bb_middle = bb.iloc[:, 2]
+                # pandas-ta column names: BBL_*, BBM_*, BBU_*
+                bbl_col = next((c for c in bb.columns if c.startswith('BBL_')), None)
+                bbm_col = next((c for c in bb.columns if c.startswith('BBM_')), None)
+                bbu_col = next((c for c in bb.columns if c.startswith('BBU_')), None)
                 
-                df['bb_width'] = bb_upper - bb_lower
-                df['bb_width_pct'] = (df['bb_width'] / bb_middle * 100).fillna(0)
-                df['bb_expansion'] = df['bb_width'].pct_change().fillna(0)
-                
-                # Squeeze: ancho < percentil 20
-                bb_width_sma = df['bb_width'].rolling(20).mean()
-                squeeze_threshold = df['bb_width'].rolling(20).quantile(0.2)
-                
-                df[COL_SIGNAL] = np.where(
-                    df['bb_width'] < squeeze_threshold.fillna(df['bb_width']), 1,
-                    np.where(df['bb_expansion'] > 0, 1, -1)
-                )
-                
-                if use_cache:
-                    calculated_columns['bb_width'] = df['bb_width'].copy()
-                    calculated_columns['bb_width_pct'] = df['bb_width_pct'].copy()
-                    calculated_columns['bb_expansion'] = df['bb_expansion'].copy()
-                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+                if bbl_col and bbm_col and bbu_col:
+                    bb_lower = bb[bbl_col]
+                    bb_middle = bb[bbm_col]
+                    bb_upper = bb[bbu_col]
+                    
+                    df['bb_width'] = bb_upper - bb_lower
+                    df['bb_width_pct'] = (df['bb_width'] / bb_middle.replace(0, np.nan) * 100).fillna(0)
+                    df['bb_expansion'] = df['bb_width'].pct_change().fillna(0)
+                    squeeze_threshold = df['bb_width'].rolling(20).quantile(0.2)
+                    
+                    df[COL_SIGNAL] = np.where(
+                        df['bb_width'] < squeeze_threshold.fillna(df['bb_width']), 1,
+                        np.where(df['bb_expansion'] > 0, 1, -1)
+                    )
+                    
+                    if use_cache:
+                        calculated_columns['bb_width'] = df['bb_width'].copy()
+                        calculated_columns['bb_width_pct'] = df['bb_width_pct'].copy()
+                        calculated_columns['bb_expansion'] = df['bb_expansion'].copy()
+                        calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+                else:
+                    df[COL_SIGNAL] = 0
             else:
                 df[COL_SIGNAL] = 0
         except Exception as e:
@@ -825,16 +830,13 @@ def calculate_indicator_and_signals(
                                    d=d_period)
             
             if stoch_rsi is not None and not stoch_rsi.empty:
-                # Obtener columnas K y D
-                k_col = next((c for c in stoch_rsi.columns if 'K' in c and 'D' not in c), None)
-                d_col = next((c for c in stoch_rsi.columns if 'D' in c), None)
+                # pandas-ta columns: STOCHRSIk_* and STOCHRSId_*
+                k_col = next((c for c in stoch_rsi.columns if c.startswith('STOCHRSIk_')), None)
+                d_col = next((c for c in stoch_rsi.columns if c.startswith('STOCHRSId_')), None)
                 
-                if k_col:
+                if k_col and d_col:
                     df['stoch_rsi_k'] = stoch_rsi[k_col]
-                    if d_col:
-                        df['stoch_rsi_d'] = stoch_rsi[d_col]
-                    else:
-                        df['stoch_rsi_d'] = df['stoch_rsi_k'].rolling(d_period).mean()
+                    df['stoch_rsi_d'] = stoch_rsi[d_col]
                     
                     # Signal: Overbought/Oversold
                     df[COL_SIGNAL] = np.where(
@@ -844,11 +846,12 @@ def calculate_indicator_and_signals(
                     
                     # Detectar crossover K-D
                     kd_diff = df['stoch_rsi_k'] - df['stoch_rsi_d']
-                    kd_cross = np.diff(np.sign(kd_diff.fillna(0)))
-                    if len(kd_cross) > 0:
-                        cross_indices = np.where(kd_cross != 0)[0] + 1
+                    kd_sign = np.sign(kd_diff.fillna(0))
+                    kd_cross = kd_sign.diff().fillna(0)
+                    cross_indices = np.where(kd_cross != 0)[0]
+                    if len(cross_indices) > 0:
                         df.loc[cross_indices, COL_SIGNAL] = np.where(
-                            kd_cross[kd_cross != 0] > 0, 1, -1
+                            kd_cross.iloc[cross_indices] > 0, 1, -1
                         )
                     
                     if use_cache:
@@ -873,21 +876,27 @@ def calculate_indicator_and_signals(
             mfi = ta.mfi(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE],
                         df['Volume'], length=period)
             
-            if mfi is not None and not mfi.empty:
-                mfi_col = next((c for c in mfi.columns if c.startswith('MFI_')), None)
-                if mfi_col:
-                    df['mfi'] = mfi[mfi_col]
-                    
-                    df[COL_SIGNAL] = np.where(
-                        df['mfi'] > overbought, -1,
-                        np.where(df['mfi'] < oversold, 1, 0)
-                    )
-                    
-                    if use_cache:
-                        calculated_columns['mfi'] = df['mfi'].copy()
-                        calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            if mfi is not None:
+                # pandas-ta MFI devuelve Series directamente
+                if isinstance(mfi, pd.Series):
+                    df['mfi'] = mfi
+                elif isinstance(mfi, pd.DataFrame):
+                    mfi_col = next((c for c in mfi.columns if c.startswith('MFI_')), None)
+                    if mfi_col:
+                        df['mfi'] = mfi[mfi_col]
+                    else:
+                        df['mfi'] = mfi.iloc[:, 0]
                 else:
-                    df[COL_SIGNAL] = 0
+                    df['mfi'] = mfi
+                
+                df[COL_SIGNAL] = np.where(
+                    df['mfi'] > overbought, -1,
+                    np.where(df['mfi'] < oversold, 1, 0)
+                )
+                
+                if use_cache:
+                    calculated_columns['mfi'] = df['mfi'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
             else:
                 df[COL_SIGNAL] = 0
         except Exception as e:

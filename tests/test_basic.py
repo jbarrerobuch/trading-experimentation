@@ -1,4 +1,4 @@
--"""
+"""
 Tests básicos para el módulo trading_strategy
 
 Para ejecutar:
@@ -271,7 +271,7 @@ def test_bbands_width(sample_ohlcv_data):
     assert 'bb_expansion' in result.columns
     assert 'signal' in result.columns
     assert result['signal'].isin([-1, 0, 1]).all()
-    assert (result['bb_width'] >= 0).all()
+    assert (result['bb_width'].dropna() >= 0).all()
     print("✅ BBands Width: PASS")
 
 
