@@ -716,6 +716,184 @@ def calculate_indicator_and_signals(
         else:
             df[COL_SIGNAL] = 0
 
+    elif indicator == 'keltner':
+        """Keltner Channels - Volatilidad dinámica basada en ATR"""
+        period = int(params.get('period', 20))
+        atr_period = int(params.get('atr_period', 10))
+        multiplier = float(params.get('multiplier', 2.0))
+        
+        try:
+            kc = ta.kc(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE],
+                      length=period, atr_length=atr_period, scalar=multiplier)
+            
+            if kc is not None and not kc.empty:
+                df['kc_upper'] = kc.iloc[:, 0]
+                df['kc_lower'] = kc.iloc[:, 1]
+                df['kc_basis'] = kc.iloc[:, 2]
+                
+                df[COL_SIGNAL] = np.where(df[COL_CLOSE] > df['kc_upper'], 1,
+                                       np.where(df[COL_CLOSE] < df['kc_lower'], -1, 0))
+                
+                if use_cache:
+                    calculated_columns['kc_upper'] = df['kc_upper'].copy()
+                    calculated_columns['kc_lower'] = df['kc_lower'].copy()
+                    calculated_columns['kc_basis'] = df['kc_basis'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        except Exception as e:
+            print(f"Error calculando Keltner Channels: {e}")
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'donchian':
+        """Donchian Channels - Máximo/Mínimo histórico para breakout detection"""
+        period = int(params.get('period', 20))
+        
+        try:
+            dc = ta.donchian(df[COL_HIGH], df[COL_LOW], length=period)
+            
+            if dc is not None and not dc.empty:
+                df['dc_upper'] = dc.iloc[:, 0]
+                df['dc_lower'] = dc.iloc[:, 1]
+                df['dc_mid'] = dc.iloc[:, 2] if dc.shape[1] > 2 else (df['dc_upper'] + df['dc_lower']) / 2
+                
+                df[COL_SIGNAL] = np.where(df[COL_CLOSE] > df['dc_upper'], 1,
+                                       np.where(df[COL_CLOSE] < df['dc_lower'], -1, 0))
+                
+                if use_cache:
+                    calculated_columns['dc_upper'] = df['dc_upper'].copy()
+                    calculated_columns['dc_lower'] = df['dc_lower'].copy()
+                    calculated_columns['dc_mid'] = df['dc_mid'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        except Exception as e:
+            print(f"Error calculando Donchian Channels: {e}")
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'bbands_width':
+        """Bollinger Bands Width - Volatilidad y expansión"""
+        period = int(params.get('period', 20))
+        std_dev = float(params.get('std_dev', 2.0))
+        
+        try:
+            bb = ta.bbands(df[COL_CLOSE], length=period, std=std_dev)
+            
+            if bb is not None and not bb.empty:
+                bb_upper = bb.iloc[:, 0]
+                bb_lower = bb.iloc[:, 1]
+                bb_middle = bb.iloc[:, 2]
+                
+                df['bb_width'] = bb_upper - bb_lower
+                df['bb_width_pct'] = (df['bb_width'] / bb_middle * 100).fillna(0)
+                df['bb_expansion'] = df['bb_width'].pct_change().fillna(0)
+                
+                # Squeeze: ancho < percentil 20
+                bb_width_sma = df['bb_width'].rolling(20).mean()
+                squeeze_threshold = df['bb_width'].rolling(20).quantile(0.2)
+                
+                df[COL_SIGNAL] = np.where(
+                    df['bb_width'] < squeeze_threshold.fillna(df['bb_width']), 1,
+                    np.where(df['bb_expansion'] > 0, 1, -1)
+                )
+                
+                if use_cache:
+                    calculated_columns['bb_width'] = df['bb_width'].copy()
+                    calculated_columns['bb_width_pct'] = df['bb_width_pct'].copy()
+                    calculated_columns['bb_expansion'] = df['bb_expansion'].copy()
+                    calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+            else:
+                df[COL_SIGNAL] = 0
+        except Exception as e:
+            print(f"Error calculando BBands Width: {e}")
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'stoch_rsi':
+        """Stochastic RSI - Oscilador: Stochastic aplicado a RSI"""
+        rsi_period = int(params.get('rsi_period', 14))
+        stoch_period = int(params.get('stoch_period', 14))
+        k_period = int(params.get('k_period', 3))
+        d_period = int(params.get('d_period', 3))
+        overbought = float(params.get('overbought', 0.8))
+        oversold = float(params.get('oversold', 0.2))
+        
+        try:
+            stoch_rsi = ta.stochrsi(df[COL_CLOSE],
+                                   length=rsi_period,
+                                   rsi_length=rsi_period,
+                                   k=k_period,
+                                   d=d_period)
+            
+            if stoch_rsi is not None and not stoch_rsi.empty:
+                # Obtener columnas K y D
+                k_col = next((c for c in stoch_rsi.columns if 'K' in c and 'D' not in c), None)
+                d_col = next((c for c in stoch_rsi.columns if 'D' in c), None)
+                
+                if k_col:
+                    df['stoch_rsi_k'] = stoch_rsi[k_col]
+                    if d_col:
+                        df['stoch_rsi_d'] = stoch_rsi[d_col]
+                    else:
+                        df['stoch_rsi_d'] = df['stoch_rsi_k'].rolling(d_period).mean()
+                    
+                    # Signal: Overbought/Oversold
+                    df[COL_SIGNAL] = np.where(
+                        df['stoch_rsi_k'] > overbought, -1,
+                        np.where(df['stoch_rsi_k'] < oversold, 1, 0)
+                    )
+                    
+                    # Detectar crossover K-D
+                    kd_diff = df['stoch_rsi_k'] - df['stoch_rsi_d']
+                    kd_cross = np.diff(np.sign(kd_diff.fillna(0)))
+                    if len(kd_cross) > 0:
+                        cross_indices = np.where(kd_cross != 0)[0] + 1
+                        df.loc[cross_indices, COL_SIGNAL] = np.where(
+                            kd_cross[kd_cross != 0] > 0, 1, -1
+                        )
+                    
+                    if use_cache:
+                        calculated_columns['stoch_rsi_k'] = df['stoch_rsi_k'].copy()
+                        calculated_columns['stoch_rsi_d'] = df['stoch_rsi_d'].copy()
+                        calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+                else:
+                    df[COL_SIGNAL] = 0
+            else:
+                df[COL_SIGNAL] = 0
+        except Exception as e:
+            print(f"Error calculando Stochastic RSI: {e}")
+            df[COL_SIGNAL] = 0
+
+    elif indicator == 'mfi':
+        """Money Flow Index - RSI ponderado por volumen"""
+        period = int(params.get('period', 14))
+        overbought = float(params.get('overbought', 80))
+        oversold = float(params.get('oversold', 20))
+        
+        try:
+            mfi = ta.mfi(df[COL_HIGH], df[COL_LOW], df[COL_CLOSE],
+                        df['Volume'], length=period)
+            
+            if mfi is not None and not mfi.empty:
+                mfi_col = next((c for c in mfi.columns if c.startswith('MFI_')), None)
+                if mfi_col:
+                    df['mfi'] = mfi[mfi_col]
+                    
+                    df[COL_SIGNAL] = np.where(
+                        df['mfi'] > overbought, -1,
+                        np.where(df['mfi'] < oversold, 1, 0)
+                    )
+                    
+                    if use_cache:
+                        calculated_columns['mfi'] = df['mfi'].copy()
+                        calculated_columns[COL_SIGNAL] = df[COL_SIGNAL].copy()
+                else:
+                    df[COL_SIGNAL] = 0
+            else:
+                df[COL_SIGNAL] = 0
+        except Exception as e:
+            print(f"Error calculando MFI: {e}")
+            df[COL_SIGNAL] = 0
+
     else:
         # Indicador no implementado, retornar señal neutral
         df[COL_SIGNAL] = 0
