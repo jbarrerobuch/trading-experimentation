@@ -227,5 +227,87 @@ def test_performance_large_dataset():
     assert len(result) > 0
 
 
+# ========== TESTS DE NUEVOS INDICADORES (5 NUEVOS) ==========
+
+def test_keltner_channels(sample_ohlcv_data):
+    """Test Keltner Channels"""
+    result = calculate_indicator_and_signals(
+        sample_ohlcv_data,
+        'keltner',
+        {'period': 20, 'atr_period': 10, 'multiplier': 2}
+    )
+    assert 'kc_upper' in result.columns
+    assert 'kc_lower' in result.columns
+    assert 'kc_basis' in result.columns
+    assert 'signal' in result.columns
+    assert result['signal'].isin([-1, 0, 1]).all()
+    print("✅ Keltner Channels: PASS")
+
+
+def test_donchian_channels(sample_ohlcv_data):
+    """Test Donchian Channels"""
+    result = calculate_indicator_and_signals(
+        sample_ohlcv_data,
+        'donchian',
+        {'period': 20}
+    )
+    assert 'dc_upper' in result.columns
+    assert 'dc_lower' in result.columns
+    assert 'dc_mid' in result.columns
+    assert 'signal' in result.columns
+    assert result['signal'].isin([-1, 0, 1]).all()
+    print("✅ Donchian Channels: PASS")
+
+
+def test_bbands_width(sample_ohlcv_data):
+    """Test Bollinger Bands Width"""
+    result = calculate_indicator_and_signals(
+        sample_ohlcv_data,
+        'bbands_width',
+        {'period': 20, 'std_dev': 2}
+    )
+    assert 'bb_width' in result.columns
+    assert 'bb_width_pct' in result.columns
+    assert 'bb_expansion' in result.columns
+    assert 'signal' in result.columns
+    assert result['signal'].isin([-1, 0, 1]).all()
+    assert (result['bb_width'] >= 0).all()
+    print("✅ BBands Width: PASS")
+
+
+def test_stoch_rsi(sample_ohlcv_data):
+    """Test Stochastic RSI"""
+    result = calculate_indicator_and_signals(
+        sample_ohlcv_data,
+        'stoch_rsi',
+        {
+            'rsi_period': 14,
+            'stoch_period': 14,
+            'k_period': 3,
+            'd_period': 3,
+            'overbought': 0.8,
+            'oversold': 0.2
+        }
+    )
+    assert 'stoch_rsi_k' in result.columns
+    assert 'stoch_rsi_d' in result.columns
+    assert 'signal' in result.columns
+    assert result['signal'].isin([-1, 0, 1]).all()
+    print("✅ Stochastic RSI: PASS")
+
+
+def test_mfi(sample_ohlcv_data):
+    """Test Money Flow Index"""
+    result = calculate_indicator_and_signals(
+        sample_ohlcv_data,
+        'mfi',
+        {'period': 14, 'overbought': 80, 'oversold': 20}
+    )
+    assert 'mfi' in result.columns
+    assert 'signal' in result.columns
+    assert result['signal'].isin([-1, 0, 1]).all()
+    print("✅ Money Flow Index: PASS")
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
