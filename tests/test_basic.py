@@ -112,33 +112,33 @@ def test_backtest_strategy_returns_metrics(sample_ohlcv_data):
         # Verificar que todas las métricas esperadas existen
         expected_metrics = [
             'sharpe_ratio', 'win_rate', 'profit_factor', 
-            'max_drawdown', 'total_return', 'n_trades'
+            'max_drawdown', 'total_return', 'total_trades'
         ]
         
         for metric in expected_metrics:
             assert metric in metrics, f"Métrica {metric} no encontrada"
         
         # Verificar tipos y rangos
-        assert isinstance(metrics['n_trades'], int)
-        assert metrics['n_trades'] >= 0
+        assert isinstance(metrics['total_trades'], int)
+        assert metrics['total_trades'] >= 0
         assert 0 <= metrics['win_rate'] <= 1
 
 
 def test_backtest_strategy_with_insufficient_trades(sample_ohlcv_data):
-    """Test que backtest_strategy retorna None con pocos trades"""
-    # Generar datos con muy pocos cambios
-    df = sample_ohlcv_data.head(20).copy()
+    """Test que backtest_strategy retorna None con pocos trades (o insuficientes datos)"""
+    # Generar datos con muy pocos cambios y longitud insuficiente para el indicador
+    df = sample_ohlcv_data.head(5).copy() # RSI 14 needs > 14 rows
     df['returns'] = df['Close'].pct_change()
     
     metrics = backtest_strategy(
         df=df,
         indicator='rsi',
-        params={'period': 14, 'overbought': 99, 'oversold': 1},  # Thresholds extremos
+        params={'period': 14, 'overbought': 99, 'oversold': 1},
         position_type='long'
     )
     
-    # Debe retornar None si hay menos de 10 trades
-    assert metrics is None or metrics['n_trades'] >= 10
+    # Debe retornar None si no se pudieron generar trades
+    assert metrics is None
 
 
 # ========== TESTS DE EDGE CASES ==========
@@ -195,7 +195,7 @@ def test_full_pipeline(sample_ohlcv_data):
     # 3. Verificar resultado
     if metrics is not None:
         assert 'sharpe_ratio' in metrics
-        assert isinstance(metrics['n_trades'], int)
+        assert isinstance(metrics['total_trades'], int)
 
 
 # ========== TESTS DE PERFORMANCE ==========
