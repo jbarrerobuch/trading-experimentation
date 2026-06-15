@@ -1,0 +1,12 @@
+name: Stochastic_RSI_MeanReversion
+type: individual
+indicator: stoch_rsi
+
+params_grid:
+  rsi_period: [10, 14, 20, 28]
+  stoch_period: [10, 14, 20]
+  k_period: [3, 5, 7]
+  d_period: [3, 5, 7]
+  overbought: [0.75, 0.80, 0.85]
+  oversold: [0.15, 0.20, 0.25]
+  position_type: [both, long, short]

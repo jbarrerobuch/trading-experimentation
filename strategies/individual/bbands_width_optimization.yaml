@@ -1,0 +1,8 @@
+name: BBands_Width_Expansion
+type: individual
+indicator: bbands_width
+
+params_grid:
+  period: [15, 20, 25]
+  std_dev: [1.5, 2.0, 2.5, 3.0]
+  position_type: [both, long, short]

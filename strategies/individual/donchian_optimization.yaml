@@ -1,0 +1,7 @@
+name: Donchian_Channels_Optimization
+type: individual
+indicator: donchian
+
+params_grid:
+  period: [14, 20, 28, 35, 50]
+  position_type: [both, long, short]

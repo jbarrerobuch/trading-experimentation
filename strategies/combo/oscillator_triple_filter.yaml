@@ -1,0 +1,28 @@
+name: Oscillator_Triple_Filter
+type: combo
+
+indicators:
+  - indicator: rsi
+    params_grid:
+      period: [14]
+      overbought: [70]
+      oversold: [30]
+    weight: 1.0
+  
+  - indicator: stoch_rsi
+    params_grid:
+      rsi_period: [14]
+      stoch_period: [14]
+      k_period: [3]
+      d_period: [3]
+    weight: 1.0
+  
+  - indicator: mfi
+    params_grid:
+      period: [14]
+      overbought: [80]
+      oversold: [20]
+    weight: 1.0
+
+combination_methods: [AND, MAJORITY, WEIGHTED]
+position_types: [long, short]

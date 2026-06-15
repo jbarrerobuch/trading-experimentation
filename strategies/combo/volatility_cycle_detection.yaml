@@ -1,0 +1,20 @@
+name: Volatility_Cycle_Detection
+type: combo
+
+indicators:
+  - indicator: bbands_width
+    params_grid:
+      period: [20]
+      std_dev: [2]
+    weight: 1.0
+  
+  - indicator: stoch_rsi
+    params_grid:
+      rsi_period: [14]
+      stoch_period: [14]
+      k_period: [3]
+      d_period: [3]
+    weight: 1.0
+
+combination_methods: [OR, WEIGHTED]
+position_types: [both]

@@ -1,0 +1,9 @@
+name: Money_Flow_Index_Trading
+type: individual
+indicator: mfi
+
+params_grid:
+  period: [10, 14, 20, 28]
+  overbought: [75, 80, 85]
+  oversold: [15, 20, 25]
+  position_type: [both, long, short]
