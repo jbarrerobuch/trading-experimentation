@@ -1,540 +1,331 @@
 """
 Módulo de grid search
-Optimización de hiperparámetros para estrategias de trading
+Optimización de hiperparámetros para estrategias de trading.
+
+El logging por-experimento de MLflow se ha sustituido por un output estructurado
+en columnas (Parquet + manifest JSON, ver utils.results_io), mucho más rápido y
+pensado para ser consumido por una web-app de análisis.
 """
 
 import time
 import gc
-import os
-import re
-import datetime
 import subprocess
-import tempfile
-import pandas as pd
-import numpy as np
+from functools import lru_cache
 from itertools import product
-from .backtesting import backtest_strategy, get_strategy_trades
-from .utils.mlflow_utils import setup_mlflow
-from .utils.mlflow_viz import create_interactive_trade_chart
-from .utils.helpers import generate_run_name
 
-# Intentar importar psutil para métricas del sistema
-try:
-    import psutil
-except ImportError:
-    psutil = None
+import pandas as pd
 
-# MLflow (importación condicional)
-try:
-    import mlflow
-    MLFLOW_AVAILABLE = True
-except ImportError:
-    MLFLOW_AVAILABLE = False
-    mlflow = None
-    print("⚠️  MLflow no disponible - desactivando tracking")
+from .backtesting import backtest_strategy, new_value_cache
+from .utils import results_io
 
 
+@lru_cache(maxsize=1)
 def get_git_commit():
-    """Obtiene el hash del commit actual de git"""
+    """Hash del commit actual de git (cacheado: se calcula una sola vez)."""
     try:
-        return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+        return subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            stderr=subprocess.DEVNULL
+        ).decode('ascii').strip()
     except Exception:
         return "unknown"
 
 
-def strategy_grid_search(df, strategy_configs, use_mlflow=True, ticker='BTCUSDT', timeframe='1h', 
-                         experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
-                         session_id=None, log_artifacts=False, verbose=True):
-    """
-    Grid Search para optimizar parámetros de estrategias de trading
-    Calcula indicadores dinámicamente según configuración
-    
-    Parameters:
-    -----------
-    df : DataFrame
-        Datos OHLCV básicos (open, high, low, close, volume, returns)
-        NO necesita indicadores pre-calculados
-    strategy_configs : list
-        Lista de configuraciones de estrategia a probar
-        Soporta estrategias individuales y combinadas
-    use_mlflow : bool
-        Si True, registra experimentos en MLflow
-    ticker : str
-        Símbolo del activo (ej: 'BTCUSDT', 'ETHUSDT', 'SOLUSDT')
-        Se normaliza a mayúsculas. Se usa como tag en MLflow
-        Default: 'BTCUSDT'
-    timeframe : str
-        Timeframe de los datos (ej: '1h', '4h', '1d', '15m')
-        Se normaliza a minúsculas. Se usa como tag en MLflow
-        Default: '1h'
-    experiment_name : str
-        Nombre del experimento en MLflow
-        Default: 'default'
-    commission : float
-        Comisión por operación (ej: 0.001 = 0.1%)
-    slippage : float
-        Deslizamiento estimado (ej: 0.0001 = 0.01%)
-    use_next_open : bool
-        Si True, ejecuta operaciones al Open de la siguiente vela (más realista).
-    session_id : str, optional
-        ID de sesión para agrupar ejecuciones en MLflow.
-        Si es None, se genera uno nuevo basado en timestamp.
-    log_artifacts : bool
-        Si True, genera y guarda gráficos y CSVs de trades para CADA experimento.
-        ⚠️  Muy lento para grid search grandes. Default: False.
-    verbose : bool
-        Si True, imprime detalles de progreso en consola. Default: True.
-    
-    Returns:
-    --------
-    DataFrame con resultados de todas las combinaciones
-    Incluye columnas 'ticker' y 'timeframe' para análisis multi-asset
-    """
-    import numpy as np  # Ensure numpy is available
-    all_results = []
-    
-    # Normalizar ticker y timeframe
-    ticker_normalized = ticker.upper()
-    timeframe_normalized = timeframe.lower()
-    
-    if verbose:
-        print(f"\n🎯 Asset: {ticker_normalized} | Timeframe: {timeframe_normalized}")
-        print(f"📊 Experimento MLflow: {experiment_name}")
-    
-    # Limpiar cache de indicadores al inicio (para nuevo ticker/timeframe)
-    # from .indicators import clear_indicator_cache
-    # clear_indicator_cache()
-    
-    # Configurar MLflow
-    if use_mlflow:
-        if not setup_mlflow(experiment_name):
-            use_mlflow = False
+# ============================================================================
+# ENUMERACIÓN DE EXPERIMENTOS
+# ============================================================================
 
-    # Preparar metadatos del dataset (fuera del loop para eficiencia)
-    dataset_tags = {}
-    mlflow_dataset = None
-    
-    if use_mlflow and not df.empty:
-        try:
-            # Calcular fechas
-            start_date = df.index.min()
-            end_date = df.index.max()
-            duration = end_date - start_date
-            
-            dataset_tags = {
-                "data_start_date": start_date.strftime('%Y-%m-%d %H:%M:%S'),
-                "data_end_date": end_date.strftime('%Y-%m-%d %H:%M:%S'),
-                "data_days": duration.days,
-                "data_rows": len(df)
-            }
-            
-            # Intentar crear objeto Dataset de MLflow
-            try:
-                from mlflow.data.pandas_dataset import PandasDataset
-                # Usar un nombre descriptivo para el dataset
-                ds_name = f"{ticker_normalized}_{timeframe_normalized}"
-                mlflow_dataset = PandasDataset(df, name=ds_name, source=ds_name) # pyright: ignore[reportArgumentType]
-            except (ImportError, AttributeError):
-                # MLflow antiguo o sin soporte de data
-                pass
-                
-        except Exception as e:
-            print(f"⚠️  Error preparando metadatos de MLflow: {e}")
-    
-    # Usar todos los datos para optimización (la validación se hace vía Walk-Forward)
-    train_df = df
-    if verbose:
-        print(f"📊 Usando {len(df)} velas para optimización")
-
-    # Calcular total de experimentos
-    total_experiments = 0
-    for config in strategy_configs:
-        if config.get('type') == 'combo':
-            # Estrategia combinada
-            indicators = config['indicators']
-            n_combos = 1
-            for ind in indicators:
-                n_combos *= len(list(product(*ind['params_grid'].values())))
-            n_combos *= len(config.get('combination_methods', ['AND']))
-            n_combos *= len(config.get('position_types', ['long']))
-            total_experiments += n_combos
-        else:
-            # Estrategia individual
-            params_grid = config['params_grid']
-            param_values = list(params_grid.values())
-            total_experiments += len(list(product(*param_values)))
-    
-    if verbose:
-        print(f"📊 Total de experimentos a ejecutar: {total_experiments}")
-    
-    experiment_count = 0
-    start_time = time.time()
-    
-    # Iterar sobre cada configuración de estrategia
+def _enumerate_tasks(strategy_configs):
+    """
+    Genera una lista de "tareas" (un backtest totalmente especificado cada una)
+    a partir de las configuraciones de estrategia.
+    """
+    tasks = []
     for strategy_config in strategy_configs:
         strategy_name = strategy_config['name']
-        
+
         if strategy_config.get('type') == 'combo':
-            # ========== ESTRATEGIA COMBINADA ==========
-            if verbose:
-                print(f"\n📊 Estrategia Combinada: {strategy_name}")
-            
             indicators = strategy_config['indicators']
-            
-            # Generar todas las combinaciones de parámetros para cada indicador
+
             indicators_param_combos = []
             for ind_config in indicators:
-                indicator_name = ind_config['indicator']
                 params_grid = ind_config['params_grid']
-                
                 param_names = list(params_grid.keys())
                 param_values = list(params_grid.values())
-                param_combos = list(product(*param_values))
-                
-                combos_list = [dict(zip(param_names, combo)) for combo in param_combos]
-                
+                combos_list = [dict(zip(param_names, combo)) for combo in product(*param_values)]
                 indicators_param_combos.append({
-                    'indicator': indicator_name,
+                    'indicator': ind_config['indicator'],
                     'combos': combos_list
                 })
-            
-            # Generar producto cartesiano de todos los indicadores
-            all_indicator_combos = list(product(*[ind['combos'] for ind in indicators_param_combos]))
-            
+
+            all_indicator_combos = product(*[ind['combos'] for ind in indicators_param_combos])
             combination_methods = strategy_config.get('combination_methods', ['AND'])
             position_types = strategy_config.get('position_types', ['long'])
-            
-            total_combos = len(all_indicator_combos) * len(combination_methods) * len(position_types)
-            if verbose:
-                print(f"   Combinaciones totales: {total_combos}")
-            
+
             for indicator_params_set in all_indicator_combos:
-                # Construir configuración de indicadores
-                indicators_combo = []
-                for idx, ind_params in enumerate(indicator_params_set):
-                    indicators_combo.append({
-                        'indicator': indicators_param_combos[idx]['indicator'],
-                        'params': ind_params
-                    })
-                
-                # Probar con diferentes métodos de combinación
+                indicators_combo = [
+                    {'indicator': indicators_param_combos[idx]['indicator'], 'params': ind_params}
+                    for idx, ind_params in enumerate(indicator_params_set)
+                ]
                 for combination_method in combination_methods:
                     for position_type in position_types:
-                        experiment_count += 1
-                        
-                        # Ejecutar backtest combinado
-                        metrics = backtest_strategy(
-                            df=train_df,
-                            indicator=None,
-                            params={},
-                            position_type=position_type,
-                            indicators_combo=indicators_combo,
-                            combination_method=combination_method,
-                            commission=commission,
-                            slippage=slippage,
-                            use_next_open=use_next_open
-                        )
-                        
-                        if metrics is None:
-                            continue
-                        
-                        # Preparar resultado
-                        result = {
-                            'ticker': ticker_normalized,
-                            'timeframe': timeframe_normalized,
+                        tasks.append({
+                            'type': 'combo',
                             'strategy_name': strategy_name,
-                            'strategy_type': 'combo',
+                            'indicators_combo': indicators_combo,
                             'combination_method': combination_method,
                             'position_type': position_type,
-                            'n_indicators': len(indicators_combo),
-                            **metrics
-                        }
-                        
-                        # Agregar parámetros de cada indicador
-                        for idx, ind_combo in enumerate(indicators_combo):
-                            indicator_name = ind_combo['indicator']
-                            result[f'ind{idx+1}_name'] = indicator_name
-                            for param_name, param_value in ind_combo['params'].items():
-                                result[f'ind{idx+1}_{param_name}'] = param_value
-                        
-                        all_results.append(result)
-                        
-                        # Log en MLflow
-                        if use_mlflow and MLFLOW_AVAILABLE and mlflow:
-                            run_name = generate_run_name(
-                                strategy_name, 'combo', position_type, 
-                                indicators_combo=indicators_combo, 
-                                combination_method=combination_method
-                            )
-                            with mlflow.start_run(run_name=run_name):
-                                mlflow.log_param("strategy_name", strategy_name)
-                                mlflow.log_param("strategy_type", "combo")
-                                mlflow.log_param("combination_method", combination_method)
-                                mlflow.log_param("position_type", position_type)
-                                mlflow.log_param("n_indicators", len(indicators_combo))
-                                
-                                for idx, ind_combo in enumerate(indicators_combo):
-                                    mlflow.log_param(f"ind{idx+1}_name", ind_combo['indicator'])
-                                    for param_name, param_value in ind_combo['params'].items():
-                                        mlflow.log_param(f"ind{idx+1}_{param_name}", param_value)
-                                
-                                for metric_name, metric_value in metrics.items():
-                                    if isinstance(metric_value, (int, float, np.integer, np.floating)):
-                                        mlflow.log_metric(metric_name, metric_value)
-                                
-                                mlflow.set_tag("ticker", ticker_normalized)
-                                mlflow.set_tag("timeframe", timeframe_normalized)
-                                mlflow.set_tag("strategy_type", "combo")
-                                mlflow.set_tag("git_commit", get_git_commit())
-                                
-                                # Log system metrics
-                                if psutil:
-                                    mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
-                                    mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
-
-                                # Log trades artifact (SOLO SI SE SOLICITA EXPLICITAMENTE)
-                                if log_artifacts:
-                                    try:
-                                        trades_df = get_strategy_trades(
-                                            df=train_df,
-                                            indicator=None,
-                                            params={},
-                                            position_type=position_type,
-                                            indicators_combo=indicators_combo,
-                                            combination_method=combination_method,
-                                            use_next_open=use_next_open
-                                        )
-                                        if not trades_df.empty:
-                                            # Sanitize run_name for filenames
-                                            safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
-                                            
-                                            # 1. Save CSV
-                                            csv_filename = f"trades_{safe_run_name}.csv"
-                                            csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
-                                            trades_df.to_csv(csv_path, index=False)
-                                            mlflow.log_artifact(csv_path, artifact_path="trades")
-                                            if os.path.exists(csv_path):
-                                                os.unlink(csv_path)
-
-                                            # 2. Save Interactive Chart (Bokeh)
-                                            try:
-                                                html_filename = f"viz_{safe_run_name}.html"
-                                                html_path = os.path.join(tempfile.gettempdir(), html_filename)
-                                                
-                                                chart_path = create_interactive_trade_chart(
-                                                    df=train_df,
-                                                    trades_df=trades_df,
-                                                    title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
-                                                    filename=html_path,
-                                                    indicators=indicators_combo
-                                                )
-                                                
-                                                if chart_path:
-                                                    mlflow.log_artifact(chart_path, artifact_path="plots")
-                                                    if os.path.exists(chart_path):
-                                                        os.unlink(chart_path)
-                                            except Exception as viz_error:
-                                                print(f"⚠️  Error generating chart: {viz_error}")
-
-                                    except Exception as e:
-                                        print(f"⚠️  Error logging trades artifact: {e}")
-
-                                # Tag de sesión para agrupar ejecuciones (usa timestamp)
-                                current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                mlflow.set_tag("session_id", current_session_id)
-                                
-                                # Log dataset metadata
-                                for k, v in dataset_tags.items():
-                                    mlflow.set_tag(k, v)
-                                if mlflow_dataset:
-                                    try:
-                                        mlflow.log_input(mlflow_dataset, context="training")
-                                    except Exception:
-                                        pass
-                        
-                        # Progreso
-                        if verbose and experiment_count % 10 == 0:
-                            elapsed = time.time() - start_time
-                            avg_time = elapsed / experiment_count
-                            remaining = (total_experiments - experiment_count) * avg_time
-                            print(f"   [{experiment_count}/{total_experiments}] "
-                                  f"Method: {combination_method} | "
-                                  f"Sharpe: {metrics['sharpe_ratio']:.2f} | "
-                                  f"ETA: {remaining:.0f}s")
+                        })
         else:
-            # ========== ESTRATEGIA INDIVIDUAL ==========
             indicator = strategy_config['indicator']
             params_grid = strategy_config['params_grid']
-            
-            # Generar todas las combinaciones de parámetros
             param_names = list(params_grid.keys())
             param_values = list(params_grid.values())
-            param_combinations = list(product(*param_values))
-            
-            if verbose:
-                print(f"\n📊 Estrategia Individual: {strategy_name}")
-                print(f"   Indicador: {indicator}")
-                print(f"   Combinaciones: {len(param_combinations)}")
-            
-            for param_combo in param_combinations:
-                experiment_count += 1
+
+            for param_combo in product(*param_values):
                 params = dict(zip(param_names, param_combo))
-                
-                # Extraer position_type si existe
                 position_type = params.pop('position_type', 'long')
-                
-                # Ejecutar backtest
-                metrics = backtest_strategy(
-                    train_df, indicator, params, position_type,
-                    commission=commission, slippage=slippage, use_next_open=use_next_open
-                )
-                
-                if metrics is None:
-                    continue
-                
-                # Preparar resultado
-                result = {
-                    'ticker': ticker_normalized,
-                    'timeframe': timeframe_normalized,
+                tasks.append({
+                    'type': 'single',
                     'strategy_name': strategy_name,
-                    'strategy_type': 'single',
                     'indicator': indicator,
+                    'params': params,
                     'position_type': position_type,
-                    **params,
-                    **metrics
-                }
-                
-                all_results.append(result)
-                
-                # Log en MLflow
-                if use_mlflow and MLFLOW_AVAILABLE and mlflow:
-                    run_name = generate_run_name(
-                        strategy_name, 'single', position_type, 
-                        params=params
-                    )
-                    with mlflow.start_run(run_name=run_name):
-                        mlflow.log_param("strategy_name", strategy_name)
-                        mlflow.log_param("strategy_type", "single")
-                        mlflow.log_param("indicator", indicator)
-                        mlflow.log_param("position_type", position_type)
-                        for param_name, param_value in params.items():
-                            mlflow.log_param(param_name, param_value)
-                        
-                        for metric_name, metric_value in metrics.items():
-                            if isinstance(metric_value, (int, float, np.integer, np.floating)):
-                                mlflow.log_metric(metric_name, metric_value)
-                        
-                        mlflow.set_tag("ticker", ticker_normalized)
-                        mlflow.set_tag("timeframe", timeframe_normalized)
-                        mlflow.set_tag("strategy_type", "single")
-                        mlflow.set_tag("git_commit", get_git_commit())
+                })
+    return tasks
 
-                        # Log system metrics
-                        if psutil:
-                            mlflow.log_metric("system_cpu_percent", psutil.cpu_percent())
-                            mlflow.log_metric("system_ram_percent", psutil.virtual_memory().percent)
 
-                        # Log trades artifact (SOLO SI SE SOLICITA EXPLICITAMENTE)
-                        if log_artifacts:
-                            try:
-                                trades_df = get_strategy_trades(
-                                    df=train_df,
-                                    indicator=indicator,
-                                    params=params,
-                                    position_type=position_type,
-                                    use_next_open=use_next_open
-                                )
-                                if not trades_df.empty:
-                                    # Sanitize run_name for filenames
-                                    safe_run_name = re.sub(r'[^\w\-]', '_', run_name)
-                                    
-                                    # 1. Save CSV
-                                    csv_filename = f"trades_{safe_run_name}.csv"
-                                    csv_path = os.path.join(tempfile.gettempdir(), csv_filename)
-                                    trades_df.to_csv(csv_path, index=False)
-                                    mlflow.log_artifact(csv_path, artifact_path="trades")
-                                    if os.path.exists(csv_path):
-                                        os.unlink(csv_path)
+def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, value_cache):
+    """Ejecuta un experimento y devuelve el dict de resultado (o None)."""
+    if task['type'] == 'combo':
+        indicators_combo = task['indicators_combo']
+        combination_method = task['combination_method']
+        position_type = task['position_type']
 
-                                    # 2. Save Interactive Chart (Bokeh)
-                                    try:
-                                        html_filename = f"viz_{safe_run_name}.html"
-                                        html_path = os.path.join(tempfile.gettempdir(), html_filename)
-                                        
-                                        chart_path = create_interactive_trade_chart(
-                                            df=train_df,
-                                            trades_df=trades_df,
-                                            title=f"{strategy_name} - {ticker_normalized} ({timeframe_normalized})",
-                                            filename=html_path,
-                                            indicators=[{'indicator': indicator, 'params': params}]
-                                        )
-                                        
-                                        if chart_path:
-                                            mlflow.log_artifact(chart_path, artifact_path="plots")
-                                            if os.path.exists(chart_path):
-                                                os.unlink(chart_path)
-                                    except Exception as viz_error:
-                                        print(f"⚠️  Error generating chart: {viz_error}")
+        metrics = backtest_strategy(
+            df=df, indicator=None, params={}, position_type=position_type,
+            indicators_combo=indicators_combo, combination_method=combination_method,
+            commission=commission, slippage=slippage, use_next_open=use_next_open,
+            value_cache=value_cache,
+        )
+        if metrics is None:
+            return None
 
-                            except Exception as e:
-                                print(f"⚠️  Error logging trades artifact: {e}")
+        result = {
+            'ticker': ticker, 'timeframe': timeframe,
+            'strategy_name': task['strategy_name'], 'strategy_type': 'combo',
+            'combination_method': combination_method, 'position_type': position_type,
+            'n_indicators': len(indicators_combo),
+            **metrics,
+        }
+        for idx, ind_combo in enumerate(indicators_combo):
+            result[f'ind{idx+1}_name'] = ind_combo['indicator']
+            for param_name, param_value in ind_combo['params'].items():
+                result[f'ind{idx+1}_{param_name}'] = param_value
+        result['experiment_id'] = results_io.compute_experiment_id(
+            'combo', None, {}, position_type,
+            indicators_combo=indicators_combo, combination_method=combination_method,
+        )
+        return result
 
-                        # Tag de sesión para agrupar ejecuciones (usa timestamp)
-                        current_session_id = session_id if session_id else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        mlflow.set_tag("session_id", current_session_id)
-                        
-                        # Log dataset metadata
-                        for k, v in dataset_tags.items():
-                            mlflow.set_tag(k, v)
-                        if mlflow_dataset:
-                            try:
-                                mlflow.log_input(mlflow_dataset, context="training")
-                            except Exception:
-                                pass
-                
-                # Progreso
-                if verbose and experiment_count % 10 == 0:
-                    elapsed = time.time() - start_time
-                    avg_time = elapsed / experiment_count
-                    remaining = (total_experiments - experiment_count) * avg_time
-                    print(f"   [{experiment_count}/{total_experiments}] "
-                          f"Sharpe: {metrics['sharpe_ratio']:.2f} | "
-                          f"Win%: {metrics['win_rate']:.1%} | "
-                          f"ETA: {remaining:.0f}s")
-                
-                # Liberar memoria cada 100 experimentos
-                if experiment_count % 100 == 0:
-                    gc.collect()
-    
+    # single
+    indicator = task['indicator']
+    params = task['params']
+    position_type = task['position_type']
+
+    metrics = backtest_strategy(
+        df, indicator, params, position_type,
+        commission=commission, slippage=slippage, use_next_open=use_next_open,
+        value_cache=value_cache,
+    )
+    if metrics is None:
+        return None
+
+    result = {
+        'ticker': ticker, 'timeframe': timeframe,
+        'strategy_name': task['strategy_name'], 'strategy_type': 'single',
+        'indicator': indicator, 'position_type': position_type,
+        **params, **metrics,
+    }
+    result['experiment_id'] = results_io.compute_experiment_id(
+        'single', indicator, params, position_type,
+    )
+    return result
+
+
+def _run_chunk(df, tasks, commission, slippage, use_next_open, ticker, timeframe):
+    """Ejecuta un lote de tareas con su propio value cache (para paralelo)."""
+    value_cache = new_value_cache()
+    out = []
+    for task in tasks:
+        res = _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, value_cache)
+        if res is not None:
+            out.append(res)
+    return out
+
+
+# ============================================================================
+# API PÚBLICA
+# ============================================================================
+
+def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT', timeframe='1h',
+                         experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
+                         session_id=None, log_artifacts=False, verbose=True,
+                         n_jobs=1, output_dir=None):
+    """
+    Grid Search para optimizar parámetros de estrategias de trading.
+
+    Calcula indicadores dinámicamente según configuración. La señal de cada
+    indicador se reutiliza entre los distintos ``position_type`` del mismo combo
+    de parámetros (cache de señales), evitando recálculos costosos.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Datos OHLCV (open, high, low, close, volume, returns).
+    strategy_configs : list
+        Configuraciones de estrategia (individuales y/o combinadas).
+    ticker, timeframe, experiment_name : str
+        Metadatos del dataset/experimento.
+    commission, slippage : float
+        Aceptados por compatibilidad (no aplicados al PnL en esta versión).
+    use_next_open : bool
+        Si True, ejecuta al Open de la siguiente vela (más realista).
+    session_id : str, optional
+        ID de sesión; si None se genera uno por timestamp.
+    n_jobs : int
+        1 = secuencial (default). >1 o -1 = paralelo con joblib (procesos),
+        repartiendo los experimentos entre núcleos.
+    output_dir : str or Path, optional
+        Si se indica, escribe la tabla de resultados (Parquet) y el manifest
+        (JSON) vía utils.results_io.
+    use_mlflow, log_artifacts : DEPRECATED
+        Ignorados. El logging se hace ahora vía output estructurado (output_dir).
+
+    Returns
+    -------
+    DataFrame con resultados de todas las combinaciones (ordenado por sharpe_ratio).
+    """
+    if use_mlflow or log_artifacts:
+        if verbose:
+            print("ℹ️  MLflow/log_artifacts están deprecados en grid_search; "
+                  "usa output_dir para el output estructurado (Parquet).")
+
+    ticker_normalized = ticker.upper()
+    timeframe_normalized = timeframe.lower()
+
+    if session_id is None:
+        session_id = results_io.make_session_id()
+
+    # Enumerar experimentos
+    tasks = _enumerate_tasks(strategy_configs)
+    total_experiments = len(tasks)
+
+    if verbose:
+        print(f"\n🎯 Asset: {ticker_normalized} | Timeframe: {timeframe_normalized}")
+        print(f"📊 Usando {len(df)} velas para optimización")
+        print(f"📊 Total de experimentos a ejecutar: {total_experiments}")
+
+    start_time = time.time()
+    all_results = []
+
+    # El paralelismo solo compensa con grids grandes (el spawn de procesos en
+    # Windows y el pickling del DataFrame tienen coste fijo). Para grids pequeños
+    # se ejecuta secuencialmente aunque se pida n_jobs!=1.
+    _PARALLEL_MIN_EXPERIMENTS = 500
+
+    if n_jobs and n_jobs != 1 and total_experiments >= _PARALLEL_MIN_EXPERIMENTS:
+        # ---- Ejecución paralela (joblib, procesos) ----
+        try:
+            from joblib import Parallel, delayed, cpu_count
+        except ImportError:
+            if verbose:
+                print("⚠️  joblib no disponible; ejecutando secuencialmente.")
+            Parallel = None
+
+        if Parallel is not None:
+            import math
+            n_workers = cpu_count() if n_jobs in (-1, 0) else n_jobs
+            n_workers = max(1, min(n_workers, total_experiments))
+            # Chunks CONTIGUOS: cada worker procesa un bloque de tareas seguidas,
+            # preservando la localidad del cache de señales (mismos params juntos).
+            chunk_size = math.ceil(total_experiments / n_workers)
+            chunks = [tasks[i:i + chunk_size] for i in range(0, total_experiments, chunk_size)]
+            if verbose:
+                print(f"⚡ Paralelo: {len(chunks)} workers")
+            results_lists = Parallel(n_jobs=n_workers, prefer="processes")(
+                delayed(_run_chunk)(df, chunk, commission, slippage, use_next_open,
+                                    ticker_normalized, timeframe_normalized)
+                for chunk in chunks
+            )
+            for rl in results_lists:
+                all_results.extend(rl)
+        else:
+            n_jobs = 1
+    elif n_jobs and n_jobs != 1:
+        # Grid pequeño: ignorar paralelismo
+        n_jobs = 1
+
+    if n_jobs == 1:
+        # ---- Ejecución secuencial (un solo value cache) ----
+        value_cache = new_value_cache()
+        for i, task in enumerate(tasks, 1):
+            res = _run_task(df, task, commission, slippage, use_next_open,
+                            ticker_normalized, timeframe_normalized, value_cache)
+            if res is not None:
+                all_results.append(res)
+
+            if verbose and i % 50 == 0:
+                elapsed = time.time() - start_time
+                avg = elapsed / i
+                eta = (total_experiments - i) * avg
+                print(f"   [{i}/{total_experiments}] ETA: {eta:.0f}s")
+            if i % 500 == 0:
+                gc.collect()
+
     elapsed = time.time() - start_time
     if verbose:
         print(f"\n✓ Grid Search completado en {elapsed:.1f}s")
         print(f"  Experimentos exitosos: {len(all_results)}/{total_experiments}")
-    
-    # Liberar memoria después del grid search
+
     results_df = pd.DataFrame(all_results)
-    del all_results  # Liberar lista grande
-    gc.collect()     # Forzar recolección de basura
-    
+    del all_results
+    gc.collect()
+
     if not results_df.empty:
-        results_df = results_df.sort_values('sharpe_ratio', ascending=False)
-        
-        # Mostrar top 5
+        results_df = results_df.sort_values('sharpe_ratio', ascending=False).reset_index(drop=True)
+
         if verbose:
             print(f"\n🏆 TOP 5 ESTRATEGIAS (por Sharpe Ratio):")
             print("=" * 80)
-            for rank, (idx, row) in enumerate(results_df.head(5).iterrows()):
+            for rank, (_, row) in enumerate(results_df.head(5).iterrows()):
                 strategy_type = row.get('strategy_type', 'single')
-                
                 if strategy_type == 'combo':
-                    indicators_str = ', '.join([row.get(f'ind{i}_name', '?') for i in range(1, row.get('n_indicators', 0) + 1)])
-                    print(f"\n{rank+1}. {row['strategy_name']} (COMBO: {indicators_str})")
+                    inds = ', '.join([str(row.get(f'ind{i}_name', '?'))
+                                      for i in range(1, int(row.get('n_indicators', 0)) + 1)])
+                    print(f"\n{rank+1}. {row['strategy_name']} (COMBO: {inds})")
                     print(f"   Method: {row['combination_method']}, Position: {row['position_type']}")
                 else:
                     print(f"\n{rank+1}. {row['strategy_name']} ({row.get('indicator', 'N/A')})")
                     print(f"   Position: {row['position_type']}, Period: {row.get('period', 'N/A')}")
-                
                 print(f"   Sharpe: {row['sharpe_ratio']:.3f} | Win%: {row['win_rate']:.1%} | "
                       f"PF: {row['profit_factor']:.2f} | Return: {row['total_return']:.2%}")
-    
+
+    # Output estructurado (reemplazo de MLflow)
+    if output_dir is not None and not results_df.empty:
+        manifest = results_io.build_manifest(
+            session_id=session_id, experiment_name=experiment_name,
+            ticker=ticker_normalized, timeframe=timeframe_normalized, df=df,
+            commission=commission, slippage=slippage, use_next_open=use_next_open,
+            git_commit=get_git_commit(), n_experiments=len(results_df), elapsed_s=elapsed,
+        )
+        paths = results_io.write_results(
+            results_df, output_dir, experiment_name=experiment_name,
+            ticker=ticker_normalized, timeframe=timeframe_normalized,
+            session_id=session_id, manifest=manifest,
+        )
+        if verbose:
+            print(f"\n💾 Resultados: {paths['results']}")
+            print(f"💾 Manifest:   {paths.get('manifest')}")
+
     return results_df

@@ -51,49 +51,37 @@ def is_outlier_mod_zscore(series: pd.Series, threshold: float = 3.5) -> pd.Serie
 
 
 def calculate_trade_statistics(
-    trades_df: pd.DataFrame, 
+    trades_df,
     returns_col: str = 'pnl_pct',
     initial_capital: float = 10000.0
 ) -> Dict[str, float]:
     """
-    Calcula estadísticas detalladas de performance a partir de un DataFrame de trades.
-    
+    Calcula estadísticas detalladas de performance a partir de los trades.
+
     Parameters:
     -----------
-    trades_df : DataFrame
-        DataFrame con columna de retornos por trade
+    trades_df : DataFrame | np.ndarray | pd.Series
+        DataFrame con columna de retornos por trade, o directamente un array de
+        retornos (pnl_pct) de los trades cerrados. El array es la ruta rápida
+        usada por el grid search (evita construir el DataFrame de trades).
     returns_col : str
-        Nombre de la columna de retornos (default: 'pnl_pct')
+        Nombre de la columna de retornos (default: 'pnl_pct'). Solo se usa con DataFrame.
     initial_capital : float
         Capital inicial para cálculos de equity y drawdown nominal
-    
+
     Returns:
     --------
     dict : Diccionario con estadísticas de trading completas
     """
+    # Ruta rápida: array/Series de retornos directamente
+    if isinstance(trades_df, (np.ndarray, pd.Series)):
+        returns = np.asarray(trades_df, dtype=float)
+        if returns.size == 0:
+            return _empty_stats(initial_capital)
+        return _stats_from_returns(returns, initial_capital)
+
     if trades_df.empty:
-        return {
-            'total_trades': 0,
-            'win_rate': 0.0,
-            'total_return': 0.0,
-            'sharpe_ratio': 0.0,
-            'sortino_ratio': 0.0,
-            'calmar_ratio': 0.0,
-            'max_drawdown': 0.0,
-            'profit_factor': 0.0,
-            'avg_trade': 0.0,
-            'avg_win': 0.0,
-            'avg_loss': 0.0,
-            'risk_reward_ratio': 0.0,
-            'sqn': 0.0,
-            'kelly_criterion': 0.0,
-            'expectancy': 0.0,
-            'net_profit_usd': 0.0,
-            'final_equity': initial_capital,
-            'max_drawdown_usd': 0.0,
-            'best_trade': 0.0,
-            'worst_trade': 0.0
-        }
+        return _empty_stats(initial_capital)
 
     # Normalizar nombre de columna si es necesario
     if returns_col not in trades_df.columns:
@@ -111,75 +99,97 @@ def calculate_trade_statistics(
             'error': 'Returns column not found' # pyright: ignore[reportReturnType]
         }
 
-    returns = trades_df[returns_col]
-    
+    returns = np.asarray(trades_df[returns_col], dtype=float)
+    return _stats_from_returns(returns, initial_capital)
+
+
+def _empty_stats(initial_capital: float) -> Dict[str, float]:
+    """Métricas por defecto cuando no hay trades."""
+    return {
+        'total_trades': 0,
+        'win_rate': 0.0,
+        'total_return': 0.0,
+        'sharpe_ratio': 0.0,
+        'sortino_ratio': 0.0,
+        'calmar_ratio': 0.0,
+        'max_drawdown': 0.0,
+        'profit_factor': 0.0,
+        'avg_trade': 0.0,
+        'avg_win': 0.0,
+        'avg_loss': 0.0,
+        'risk_reward_ratio': 0.0,
+        'sqn': 0.0,
+        'kelly_criterion': 0.0,
+        'expectancy': 0.0,
+        'net_profit_usd': 0.0,
+        'final_equity': initial_capital,
+        'max_drawdown_usd': 0.0,
+        'best_trade': 0.0,
+        'worst_trade': 0.0
+    }
+
+
+def _stats_from_returns(returns: np.ndarray, initial_capital: float = 10000.0) -> Dict[str, float]:
+    """
+    Calcula las estadísticas a partir de un array numpy de retornos por trade.
+
+    Replica exactamente la semántica de la implementación basada en pandas
+    (incluyendo std con ddof=1) para garantizar números idénticos.
+    """
     # 1. Métricas Básicas
     wins = returns[returns > 0]
-    losses = returns[returns <= 0]
-    
-    total_trades = len(returns)
-    n_wins = len(wins)
-    n_losses = len(losses)
-    
+    losses = returns[returns <= 0]          # incluye ceros (igual que el original)
+
+    total_trades = returns.size
+    n_wins = wins.size
+    n_losses = losses.size
+
     win_rate = n_wins / total_trades if total_trades > 0 else 0.0
     avg_win = wins.mean() if n_wins > 0 else 0.0
     avg_loss = losses.mean() if n_losses > 0 else 0.0
     avg_trade = returns.mean()
-    
+
     best_trade = returns.max()
     worst_trade = returns.min()
-    
+
     # Profit Factor
     gross_profit = wins.sum() if n_wins > 0 else 0.0
     gross_loss = abs(losses.sum()) if n_losses > 0 else 0.0
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
-    
+
     # Risk Reward
     risk_reward = abs(avg_win / avg_loss) if avg_loss != 0 else 0.0
-    
-    # 2. Métricas de Equity y Drawdown (Trade-based)
-    # Asumimos reinversión compuesta para la curva de equity
-    equity_curve = (1 + returns).cumprod() * initial_capital
-    final_equity = equity_curve.iloc[-1]
+
+    # 2. Equity y Drawdown (reinversión compuesta)
+    equity_curve = np.cumprod(1.0 + returns) * initial_capital
+    final_equity = equity_curve[-1]
     net_profit_usd = final_equity - initial_capital
     total_return = (final_equity / initial_capital) - 1
-    
-    # Drawdown
-    running_max = equity_curve.cummax()
+
+    running_max = np.maximum.accumulate(equity_curve)
     drawdown = (equity_curve - running_max) / running_max
     max_drawdown = drawdown.min()
-    
-    # Drawdown USD
+
     drawdown_usd = running_max - equity_curve
     max_drawdown_usd = drawdown_usd.max()
-    
-    # 3. Métricas Avanzadas (Trade-based)
-    
-    # Sharpe Ratio (Trade-based)
-    std_ret = returns.std()
+
+    # 3. Métricas Avanzadas (pandas usa ddof=1 en std)
+    std_ret = returns.std(ddof=1) if total_trades > 1 else np.nan
     sharpe_ratio = (avg_trade / std_ret * np.sqrt(total_trades)) if std_ret > 0 else 0.0
-    
-    # Sortino Ratio (Trade-based)
+
     downside_returns = returns[returns < 0]
-    downside_std = downside_returns.std() if len(downside_returns) > 0 else 0.0
-    # Sortino usa downside deviation de todos los retornos (asumiendo target=0)
-    # Una aproximación común es usar std de solo los negativos, pero ajustado al total
-    # Aquí usamos la std de los negativos como proxy simple
-    sortino_ratio = (avg_trade / downside_std * np.sqrt(total_trades)) if downside_std > 0 else 0.0
-    
-    # Calmar Ratio
-    calmar_ratio = total_return / abs(max_drawdown) if max_drawdown != 0 else 0.0
-    
-    # SQN (System Quality Number)
-    sqn = (np.sqrt(total_trades) * (avg_trade / std_ret)) if std_ret > 0 else 0.0
-    
-    # Kelly Criterion
-    if risk_reward > 0:
-        kelly = win_rate - (1 - win_rate) / risk_reward
+    if downside_returns.size == 0:
+        downside_std = 0.0
+    elif downside_returns.size == 1:
+        downside_std = np.nan   # pandas .std(ddof=1) de 1 elemento -> NaN
     else:
-        kelly = 0.0
-        
-    # Expectancy
+        downside_std = downside_returns.std(ddof=1)
+    sortino_ratio = (avg_trade / downside_std * np.sqrt(total_trades)) if downside_std > 0 else 0.0
+
+    calmar_ratio = total_return / abs(max_drawdown) if max_drawdown != 0 else 0.0
+    sqn = (np.sqrt(total_trades) * (avg_trade / std_ret)) if std_ret > 0 else 0.0
+
+    kelly = win_rate - (1 - win_rate) / risk_reward if risk_reward > 0 else 0.0
     expectancy = (win_rate * avg_win) - ((1 - win_rate) * abs(avg_loss))
 
     return {
