@@ -114,10 +114,10 @@ def create_batch_configs(strategy_config, batch_size):
         return batch_configs
 
 
-def batch_grid_search(df, strategy_configs, batch_size=10000, 
-                     use_mlflow=True, ticker='BTCUSDT', timeframe='1h',
+def batch_grid_search(df, strategy_configs, batch_size=10000,
+                     use_mlflow=False, ticker='BTCUSDT', timeframe='1h',
                      experiment_name='default', save_checkpoints=True,
-                     checkpoint_dir=None, output_file=None):
+                     checkpoint_dir=None, output_file=None, n_jobs=1):
     """
     Grid Search con división automática en batches
     Optimiza memoria y permite recuperación automática (Auto-Resume)
@@ -274,11 +274,13 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
             batch_results = strategy_grid_search(
                 df=df,
                 strategy_configs=[batch_config],
-                use_mlflow=use_mlflow,
+                use_mlflow=False,  # MLflow deprecado; el output se consolida aquí
                 ticker=ticker,
                 timeframe=timeframe,
                 experiment_name=experiment_name,
-                session_id=current_session_id 
+                session_id=current_session_id,
+                n_jobs=n_jobs,
+                verbose=False,
             )
             
             # Agregar metadatos de batch

@@ -1,205 +1,239 @@
 """
 Módulo de backtesting
-Ejecuta backtests de estrategias y calcula métricas de performance
+Ejecuta backtests de estrategias y calcula métricas de performance.
+
+El motor trabaja sobre arrays numpy (sin copiar el DataFrame completo por
+experimento) y extrae los trades de forma vectorizada.
 """
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Union, Any
-from .indicators import calculate_indicator_and_signals, combine_indicator_signals
-from .constants import COL_SIGNAL, COL_RETURNS, COL_FUTURE_RET, COL_OPEN, COL_CLOSE
+from collections import OrderedDict
+from typing import Dict, List, Optional, Any
+from .indicators import compute_signal, compute_combined_signal, new_value_cache
+from .constants import (
+    COL_SIGNAL, COL_OPEN, COL_CLOSE, COL_HIGH, COL_LOW, COL_VOLUME
+)
 from .utils.stats import calculate_trade_statistics
 
 
+# ============================================================================
+# MOTOR VECTORIZADO
+# ============================================================================
+
+def _target_position(signal: np.ndarray, position_type: str) -> np.ndarray:
+    """Convierte el array de señal en la posición objetivo según el tipo."""
+    if position_type == 'long':
+        return np.where(signal > 0, 1.0, 0.0)
+    elif position_type == 'short':
+        return np.where(signal < 0, -1.0, 0.0)
+    else:  # both
+        return np.asarray(signal, dtype=float)
+
+
+def _extract_trades_raw(
+    signal: np.ndarray,
+    open_np: np.ndarray,
+    close_np: np.ndarray,
+    position_type: str = 'long',
+    use_next_open: bool = True,
+) -> Dict[str, np.ndarray]:
+    """
+    Extrae los trades cerrados de forma vectorizada.
+
+    Replica exactamente la semántica del antiguo bucle:
+    - Si ``use_next_open``, la señal en T se ejecuta al Open de T+1
+      (``exec_position`` = posición objetivo desplazada 1 vela).
+    - Un trade es un tramo maximal de posición no nula; entra al precio de la
+      vela donde empieza el tramo y sale al precio de la vela del siguiente
+      cambio de posición.
+    - La posición abierta al final (sin cambio posterior) se ignora.
+
+    Returns
+    -------
+    dict con arrays: entry_idx, exit_idx, entry_price, exit_price, pnl_pct, is_long
+    (todos de longitud n_trades, posiblemente 0).
+    """
+    target = _target_position(signal, position_type)
+
+    if use_next_open:
+        prices = open_np
+        exec_pos = np.empty_like(target)
+        exec_pos[0] = 0.0
+        exec_pos[1:] = target[:-1]
+    else:
+        prices = close_np
+        exec_pos = target
+
+    # Puntos de cambio (diff[0] = 0, igual que df.diff().fillna(0))
+    diff = np.empty_like(exec_pos)
+    diff[0] = 0.0
+    diff[1:] = exec_pos[1:] - exec_pos[:-1]
+    change_idx = np.nonzero(diff != 0)[0]
+
+    empty = np.array([], dtype=float)
+    empty_i = np.array([], dtype=int)
+    if change_idx.size < 2:
+        return {'entry_idx': empty_i, 'exit_idx': empty_i,
+                'entry_price': empty, 'exit_price': empty,
+                'pnl_pct': empty, 'is_long': np.array([], dtype=bool)}
+
+    vals = exec_pos[change_idx]
+    prices_at = prices[change_idx]
+
+    # Emparejar cada cambio con el siguiente (apertura -> cierre)
+    entry_vals = vals[:-1]
+    entry_price = prices_at[:-1]
+    exit_price = prices_at[1:]
+    entry_idx = change_idx[:-1]
+    exit_idx = change_idx[1:]
+
+    mask = entry_vals != 0
+    entry_vals = entry_vals[mask]
+    entry_price = entry_price[mask]
+    exit_price = exit_price[mask]
+    entry_idx = entry_idx[mask]
+    exit_idx = exit_idx[mask]
+
+    is_long = entry_vals > 0
+    pnl_pct = np.where(is_long,
+                       (exit_price - entry_price) / entry_price,
+                       (entry_price - exit_price) / entry_price)
+
+    return {'entry_idx': entry_idx, 'exit_idx': exit_idx,
+            'entry_price': entry_price, 'exit_price': exit_price,
+            'pnl_pct': pnl_pct, 'is_long': is_long}
+
+
+def extract_trade_returns(
+    signal: np.ndarray,
+    open_np: np.ndarray,
+    close_np: np.ndarray,
+    position_type: str = 'long',
+    use_next_open: bool = True,
+) -> np.ndarray:
+    """Devuelve solo el array de retornos (pnl_pct) de los trades cerrados."""
+    return _extract_trades_raw(signal, open_np, close_np, position_type, use_next_open)['pnl_pct']
+
+
+def _signal_array(
+    df: pd.DataFrame,
+    indicator: Optional[str],
+    params: Dict[str, Any],
+    indicators_combo: Optional[List[Dict[str, Any]]],
+    combination_method: str,
+    value_cache: Optional["OrderedDict"] = None,
+) -> Optional[np.ndarray]:
+    """
+    Calcula el array de señal para un indicador individual o un combo.
+
+    ``value_cache`` memoiza las llamadas costosas a pandas-ta (reutilizadas entre
+    distintos thresholds y position_types del mismo grid search).
+    """
+    volume_s = df[COL_VOLUME] if COL_VOLUME in df.columns else None
+    if indicators_combo is not None:
+        return compute_combined_signal(
+            df[COL_OPEN], df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], volume_s,
+            indicators_combo, combination_method, value_cache=value_cache
+        )
+    if indicator is None:
+        return None
+    sig, _ = compute_signal(
+        df[COL_OPEN], df[COL_HIGH], df[COL_LOW], df[COL_CLOSE], volume_s,
+        indicator, params, want_aux=False, value_cache=value_cache
+    )
+    return sig
+
+
+# ============================================================================
+# API PÚBLICA
+# ============================================================================
+
 def backtest_strategy(
-    df: pd.DataFrame, 
-    indicator: Optional[str], 
-    params: Dict[str, Any], 
-    position_type: str = 'long', 
-    indicators_combo: Optional[List[Dict[str, Any]]] = None, 
-    combination_method: str = 'AND', 
+    df: pd.DataFrame,
+    indicator: Optional[str],
+    params: Dict[str, Any],
+    position_type: str = 'long',
+    indicators_combo: Optional[List[Dict[str, Any]]] = None,
+    combination_method: str = 'AND',
     initial_capital: float = 10000.0,
-    commission: float = 0.001,  # 0.1% per trade
-    slippage: float = 0.0001,   # 0.01% slippage
-    use_next_open: bool = True  # Execute at next Open
+    commission: float = 0.001,   # aceptado por compatibilidad (no aplicado al PnL)
+    slippage: float = 0.0001,    # aceptado por compatibilidad (no aplicado al PnL)
+    use_next_open: bool = True,
+    value_cache: Optional["OrderedDict"] = None,
 ) -> Optional[Dict[str, float]]:
     """
-    Backtest de estrategia de trading con cálculo de métricas
-    
-    Parameters:
-    -----------
-    df : DataFrame
-        DataFrame con datos OHLCV y columna 'returns'
-    indicator : str
-        Nombre del indicador ('rsi', 'macd', 'willr', etc.)
-        Si indicators_combo es provisto, este parámetro se ignora
-    params : dict
-        Parámetros de la estrategia (period, thresholds, etc.)
-        Solo usado si indicator es un string (indicador individual)
-    position_type : str
-        'long', 'short' o 'both'
-    indicators_combo : list or None
-        Lista de configuraciones para estrategia multi-indicador
-    combination_method : str
-        Método de combinación si indicators_combo es usado
-    initial_capital : float
-        Capital inicial para calcular métricas nominales (USD)
-        Default: 10000.0
-    commission : float
-        Comisión por operación (ej: 0.001 = 0.1%)
-    slippage : float
-        Deslizamiento estimado (ej: 0.0001 = 0.01%)
-    use_next_open : bool
-        Si True, ejecuta operaciones al Open de la siguiente vela (más realista).
-        Si False, asume ejecución al Close de la vela de señal (optimista).
-    
-    Returns:
-    --------
-    dict : Métricas de performance o None si falla
+    Backtest de estrategia de trading con cálculo de métricas.
+
+    Ruta rápida: calcula la señal, extrae los retornos de los trades en numpy y
+    calcula las métricas, sin construir el DataFrame de trades.
+
+    ``value_cache`` (opcional) reutiliza el resultado del indicador (pandas-ta)
+    entre los distintos thresholds y ``position_type`` del mismo grid search.
+
+    Returns
+    -------
+    dict : Métricas de performance o None si no hay trades.
     """
-    # 1. Obtener Trades
-    trades = get_strategy_trades(
-        df, 
-        indicator, 
-        params, 
-        position_type, 
-        indicators_combo, 
-        combination_method, 
-        use_next_open
-    )
-    
-    if trades.empty:
+    signal = _signal_array(df, indicator, params, indicators_combo, combination_method, value_cache)
+    if signal is None:
         return None
-        
-    # 2. Calcular Métricas usando el módulo centralizado
-    metrics = calculate_trade_statistics(
-        trades, 
-        returns_col='pnl_pct', 
-        initial_capital=initial_capital
-    )
-    
-    # 3. Agregar metadatos
+
+    open_np = df[COL_OPEN].to_numpy()
+    close_np = df[COL_CLOSE].to_numpy()
+    pnl = extract_trade_returns(signal, open_np, close_np, position_type, use_next_open)
+
+    if pnl.size == 0:
+        return None
+
+    metrics = calculate_trade_statistics(pnl, initial_capital=initial_capital)
+
     metrics.update({
         'strategy_name': f"{indicator}_{params}" if indicator else "combo_strategy",
         'params': params if params else {},
         'n_transactions': metrics['total_trades'] * 2  # Estimado
     })
-    
     return metrics
 
 
 def get_strategy_trades(
-    df: pd.DataFrame, 
-    indicator: Optional[str], 
-    params: Dict[str, Any], 
-    position_type: str = 'long', 
-    indicators_combo: Optional[List[Dict[str, Any]]] = None, 
+    df: pd.DataFrame,
+    indicator: Optional[str],
+    params: Dict[str, Any],
+    position_type: str = 'long',
+    indicators_combo: Optional[List[Dict[str, Any]]] = None,
     combination_method: str = 'AND',
-    use_next_open: bool = True
+    use_next_open: bool = True,
 ) -> pd.DataFrame:
     """
-    Ejecuta la estrategia y extrae la lista detallada de operaciones (trades)
-    
-    Parameters:
-    -----------
-    Mismos parámetros que backtest_strategy
-    
-    Returns:
-    --------
-    DataFrame : Lista de trades con entry_time, exit_time, prices, pnl, etc.
+    Ejecuta la estrategia y extrae la lista detallada de operaciones (trades).
+
+    Returns
+    -------
+    DataFrame : Lista de trades con entry_time, exit_time, type, prices, pnl_pct, duration.
     """
-    # Trabajar sobre copia para no afectar el DF original
-    df = df.copy()
-    
-    # 1. Calcular Señales
-    if indicators_combo is not None:
-        df = combine_indicator_signals(df, indicators_combo, combination_method, inplace=True)
-    else:
-        if indicator is None:
-             return pd.DataFrame()
-        df = calculate_indicator_and_signals(df, indicator, params, inplace=True)
-    
-    if COL_SIGNAL not in df.columns:
+    signal = _signal_array(df, indicator, params, indicators_combo, combination_method)
+    if signal is None:
         return pd.DataFrame()
 
-    # 2. Determinar Posición Objetivo
-    raw_signal = df[COL_SIGNAL].fillna(0)
-    
-    if position_type == 'long':
-        target_position = np.where(raw_signal > 0, 1, 0)
-    elif position_type == 'short':
-        target_position = np.where(raw_signal < 0, -1, 0)
-    else: # both
-        target_position = raw_signal.values
-        
-    # 3. Extraer Trades
-    trades = []
-    current_pos = 0
-    entry_price = 0.0
-    entry_time = None
-    
-    # Definir precios de ejecución
-    if use_next_open:
-        # Si usamos next open, la señal en T se ejecuta al Open de T+1
-        # Alineamos la posición de ejecución: exec_pos[T] es la posición que tenemos durante la vela T
-        # que fue determinada por la señal en T-1.
-        # Pero para detectar el cambio, miramos cuando cambia la posición deseada.
-        
-        # Precios de ejecución son los Open
-        prices = df[COL_OPEN]
-        
-        # La posición efectiva cambia al Open de T+1 basado en señal de T
-        # Shift 1 para alinear: exec_position[t] es la posición tomada al inicio de t
-        exec_position = pd.Series(target_position, index=df.index).shift(1).fillna(0)
-    else:
-        # Ejecución al Close
-        prices = df[COL_CLOSE]
-        exec_position = pd.Series(target_position, index=df.index)
-        
-    # Identificar cambios de posición
-    # diff[t] != 0 significa que la posición cambió en t (al precio de t)
-    diffs = exec_position.diff().fillna(0)
-    changes = diffs[diffs != 0]
-    
-    # Iterar solo sobre los cambios para reconstruir trades
-    for time_idx, change in changes.items():
-        new_pos = exec_position[time_idx]  # pyright: ignore[reportCallIssue, reportArgumentType]
-        price = prices[time_idx] # pyright: ignore[reportArgumentType, reportCallIssue]
-        
-        # 1. Cierre de posición existente
-        if current_pos != 0:
-            # Si pasamos a flat (0) o invertimos posición (signo opuesto)
-            if new_pos == 0 or np.sign(new_pos) != np.sign(current_pos):
-                
-                # Calcular PnL
-                if current_pos > 0: # Long exit
-                    pnl_pct = (price - entry_price) / entry_price
-                    trade_type = 'long'
-                else: # Short exit
-                    pnl_pct = (entry_price - price) / entry_price
-                    trade_type = 'short'
-                
-                trades.append({
-                    'entry_time': entry_time,
-                    'exit_time': time_idx,
-                    'type': trade_type,
-                    'entry_price': entry_price,
-                    'exit_price': price,
-                    'pnl_pct': pnl_pct,
-                    'duration': time_idx - entry_time if entry_time else None # pyright: ignore[reportOperatorIssue]
-                })
-                
-                current_pos = 0
-        
-        # 2. Apertura de nueva posición
-        if new_pos != 0:
-            # Si estábamos flat o acabamos de cerrar (inversión)
-            if current_pos == 0:
-                current_pos = new_pos
-                entry_price = price
-                entry_time = time_idx
-    
-    # Si queda posición abierta al final, se puede cerrar o ignorar
-    # Aquí la ignoramos para coincidir con métricas de trades cerrados
-    
-    return pd.DataFrame(trades)
+    open_np = df[COL_OPEN].to_numpy()
+    close_np = df[COL_CLOSE].to_numpy()
+    raw = _extract_trades_raw(signal, open_np, close_np, position_type, use_next_open)
+
+    if raw['pnl_pct'].size == 0:
+        return pd.DataFrame()
+
+    index = df.index
+    entry_time = index[raw['entry_idx']]
+    exit_time = index[raw['exit_idx']]
+
+    trades = pd.DataFrame({
+        'entry_time': entry_time,
+        'exit_time': exit_time,
+        'type': np.where(raw['is_long'], 'long', 'short'),
+        'entry_price': raw['entry_price'],
+        'exit_price': raw['exit_price'],
+        'pnl_pct': raw['pnl_pct'],
+        'duration': exit_time - entry_time,
+    })
+    return trades
