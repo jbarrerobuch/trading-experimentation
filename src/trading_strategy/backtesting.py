@@ -31,28 +31,69 @@ def _target_position(signal: np.ndarray, position_type: str) -> np.ndarray:
         return np.asarray(signal, dtype=float)
 
 
+def _apply_costs(entry_price, exit_price, is_long, commission, slippage):
+    """
+    Calcula PnL bruto y neto de costes (comisión + slippage) por trade.
+
+    Modelo (round-trip):
+    - ``commission`` = fracción del notional, cobrada en entrada Y salida (×2).
+    - ``slippage`` = fracción del precio, adversa en ambos lados (compras más caro,
+      vendes más barato).
+
+    Returns
+    -------
+    dict con arrays: gross_pnl_pct, slippage_pct, commission_pct, costs_pct, net_pnl_pct
+    """
+    gross = np.where(is_long,
+                     (exit_price - entry_price) / entry_price,
+                     (entry_price - exit_price) / entry_price)
+
+    if commission == 0.0 and slippage == 0.0:
+        zeros = np.zeros_like(gross)
+        return {'gross_pnl_pct': gross, 'slippage_pct': zeros,
+                'commission_pct': zeros, 'costs_pct': zeros, 'net_pnl_pct': gross}
+
+    # Precios efectivos tras slippage (adverso en ambos lados)
+    eff_entry = np.where(is_long, entry_price * (1 + slippage), entry_price * (1 - slippage))
+    eff_exit = np.where(is_long, exit_price * (1 - slippage), exit_price * (1 + slippage))
+    gross_slip = np.where(is_long,
+                          (eff_exit - eff_entry) / eff_entry,
+                          (eff_entry - eff_exit) / eff_entry)
+
+    slippage_pct = gross - gross_slip               # retorno perdido por slippage
+    commission_pct = np.full_like(gross, 2.0 * commission)
+    costs_pct = slippage_pct + commission_pct
+    net = gross - costs_pct
+    return {'gross_pnl_pct': gross, 'slippage_pct': slippage_pct,
+            'commission_pct': commission_pct, 'costs_pct': costs_pct, 'net_pnl_pct': net}
+
+
 def _extract_trades_raw(
     signal: np.ndarray,
     open_np: np.ndarray,
     close_np: np.ndarray,
     position_type: str = 'long',
     use_next_open: bool = True,
+    commission: float = 0.0,
+    slippage: float = 0.0,
 ) -> Dict[str, np.ndarray]:
     """
-    Extrae los trades cerrados de forma vectorizada.
+    Extrae los trades cerrados de forma vectorizada (con costes opcionales).
 
-    Replica exactamente la semántica del antiguo bucle:
-    - Si ``use_next_open``, la señal en T se ejecuta al Open de T+1
-      (``exec_position`` = posición objetivo desplazada 1 vela).
-    - Un trade es un tramo maximal de posición no nula; entra al precio de la
-      vela donde empieza el tramo y sale al precio de la vela del siguiente
-      cambio de posición.
+    Replica la semántica del antiguo bucle:
+    - Si ``use_next_open``, la señal en T se ejecuta al Open de T+1.
+    - Un trade es un tramo maximal de posición no nula; entra al precio de la vela
+      donde empieza el tramo y sale al precio de la vela del siguiente cambio.
     - La posición abierta al final (sin cambio posterior) se ignora.
+
+    ``commission``/``slippage`` (fracciones) se aplican al PnL; con ambos a 0 el
+    ``pnl_pct`` es bruto (comportamiento previo).
 
     Returns
     -------
-    dict con arrays: entry_idx, exit_idx, entry_price, exit_price, pnl_pct, is_long
-    (todos de longitud n_trades, posiblemente 0).
+    dict con arrays (longitud n_trades, posiblemente 0): entry_idx, exit_idx,
+    entry_price, exit_price, is_long, pnl_pct (neto), gross_pnl_pct, slippage_pct,
+    commission_pct, costs_pct.
     """
     target = _target_position(signal, position_type)
 
@@ -76,7 +117,9 @@ def _extract_trades_raw(
     if change_idx.size < 2:
         return {'entry_idx': empty_i, 'exit_idx': empty_i,
                 'entry_price': empty, 'exit_price': empty,
-                'pnl_pct': empty, 'is_long': np.array([], dtype=bool)}
+                'is_long': np.array([], dtype=bool), 'pnl_pct': empty,
+                'gross_pnl_pct': empty, 'slippage_pct': empty,
+                'commission_pct': empty, 'costs_pct': empty}
 
     vals = exec_pos[change_idx]
     prices_at = prices[change_idx]
@@ -96,13 +139,13 @@ def _extract_trades_raw(
     exit_idx = exit_idx[mask]
 
     is_long = entry_vals > 0
-    pnl_pct = np.where(is_long,
-                       (exit_price - entry_price) / entry_price,
-                       (entry_price - exit_price) / entry_price)
+    costs = _apply_costs(entry_price, exit_price, is_long, commission, slippage)
 
     return {'entry_idx': entry_idx, 'exit_idx': exit_idx,
             'entry_price': entry_price, 'exit_price': exit_price,
-            'pnl_pct': pnl_pct, 'is_long': is_long}
+            'is_long': is_long, 'pnl_pct': costs['net_pnl_pct'],
+            'gross_pnl_pct': costs['gross_pnl_pct'], 'slippage_pct': costs['slippage_pct'],
+            'commission_pct': costs['commission_pct'], 'costs_pct': costs['costs_pct']}
 
 
 def extract_trade_returns(
@@ -111,9 +154,12 @@ def extract_trade_returns(
     close_np: np.ndarray,
     position_type: str = 'long',
     use_next_open: bool = True,
+    commission: float = 0.0,
+    slippage: float = 0.0,
 ) -> np.ndarray:
-    """Devuelve solo el array de retornos (pnl_pct) de los trades cerrados."""
-    return _extract_trades_raw(signal, open_np, close_np, position_type, use_next_open)['pnl_pct']
+    """Devuelve solo el array de retornos netos (pnl_pct) de los trades cerrados."""
+    return _extract_trades_raw(signal, open_np, close_np, position_type,
+                               use_next_open, commission, slippage)['pnl_pct']
 
 
 def _signal_array(
@@ -157,16 +203,19 @@ def backtest_strategy(
     indicators_combo: Optional[List[Dict[str, Any]]] = None,
     combination_method: str = 'AND',
     initial_capital: float = 10000.0,
-    commission: float = 0.001,   # aceptado por compatibilidad (no aplicado al PnL)
-    slippage: float = 0.0001,    # aceptado por compatibilidad (no aplicado al PnL)
+    commission: float = 0.001,   # fracción del notional, por lado (×2 round-trip)
+    slippage: float = 0.0001,    # fracción del precio, adversa en ambos lados
     use_next_open: bool = True,
     value_cache: Optional["OrderedDict"] = None,
 ) -> Optional[Dict[str, float]]:
     """
     Backtest de estrategia de trading con cálculo de métricas.
 
-    Ruta rápida: calcula la señal, extrae los retornos de los trades en numpy y
-    calcula las métricas, sin construir el DataFrame de trades.
+    Ruta rápida: calcula la señal, extrae los retornos NETOS de los trades en numpy
+    y calcula las métricas, sin construir el DataFrame de trades.
+
+    ``commission``/``slippage`` (fracciones) se aplican al PnL; las métricas quedan
+    netas de costes y se añaden agregados nominales (total_costs_usd, etc.).
 
     ``value_cache`` (opcional) reutiliza el resultado del indicador (pandas-ta)
     entre los distintos thresholds y ``position_type`` del mismo grid search.
@@ -181,12 +230,17 @@ def backtest_strategy(
 
     open_np = df[COL_OPEN].to_numpy()
     close_np = df[COL_CLOSE].to_numpy()
-    pnl = extract_trade_returns(signal, open_np, close_np, position_type, use_next_open)
+    raw = _extract_trades_raw(signal, open_np, close_np, position_type,
+                              use_next_open, commission, slippage)
 
-    if pnl.size == 0:
+    if raw['pnl_pct'].size == 0:
         return None
 
-    metrics = calculate_trade_statistics(pnl, initial_capital=initial_capital)
+    metrics = calculate_trade_statistics(
+        raw['pnl_pct'], initial_capital=initial_capital,
+        costs_pct=raw['costs_pct'], commission_pct=raw['commission_pct'],
+        slippage_pct=raw['slippage_pct'],
+    )
 
     metrics.update({
         'strategy_name': f"{indicator}_{params}" if indicator else "combo_strategy",
@@ -204,13 +258,19 @@ def get_strategy_trades(
     indicators_combo: Optional[List[Dict[str, Any]]] = None,
     combination_method: str = 'AND',
     use_next_open: bool = True,
+    commission: float = 0.001,
+    slippage: float = 0.0001,
 ) -> pd.DataFrame:
     """
     Ejecuta la estrategia y extrae la lista detallada de operaciones (trades).
 
+    ``commission``/``slippage`` (fracciones) se aplican: ``pnl_pct`` es neto y se
+    incluyen columnas de costes efectivos para análisis.
+
     Returns
     -------
-    DataFrame : Lista de trades con entry_time, exit_time, type, prices, pnl_pct, duration.
+    DataFrame : entry_time, exit_time, type, entry_price, exit_price, pnl_pct (neto),
+    gross_pnl_pct, slippage_pct, commission_pct, costs_pct, duration.
     """
     signal = _signal_array(df, indicator, params, indicators_combo, combination_method)
     if signal is None:
@@ -218,7 +278,8 @@ def get_strategy_trades(
 
     open_np = df[COL_OPEN].to_numpy()
     close_np = df[COL_CLOSE].to_numpy()
-    raw = _extract_trades_raw(signal, open_np, close_np, position_type, use_next_open)
+    raw = _extract_trades_raw(signal, open_np, close_np, position_type,
+                              use_next_open, commission, slippage)
 
     if raw['pnl_pct'].size == 0:
         return pd.DataFrame()
@@ -234,6 +295,10 @@ def get_strategy_trades(
         'entry_price': raw['entry_price'],
         'exit_price': raw['exit_price'],
         'pnl_pct': raw['pnl_pct'],
+        'gross_pnl_pct': raw['gross_pnl_pct'],
+        'slippage_pct': raw['slippage_pct'],
+        'commission_pct': raw['commission_pct'],
+        'costs_pct': raw['costs_pct'],
         'duration': exit_time - entry_time,
     })
     return trades

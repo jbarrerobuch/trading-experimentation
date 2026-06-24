@@ -50,10 +50,20 @@ def is_outlier_mod_zscore(series: pd.Series, threshold: float = 3.5) -> pd.Serie
     return mod_z_score.abs() > threshold
 
 
+def _col_array(trades_df, name):
+    """Devuelve la columna como array float, o None si no existe."""
+    if name in trades_df.columns:
+        return np.asarray(trades_df[name], dtype=float)
+    return None
+
+
 def calculate_trade_statistics(
     trades_df,
     returns_col: str = 'pnl_pct',
-    initial_capital: float = 10000.0
+    initial_capital: float = 10000.0,
+    costs_pct=None,
+    commission_pct=None,
+    slippage_pct=None,
 ) -> Dict[str, float]:
     """
     Calcula estadísticas detalladas de performance a partir de los trades.
@@ -62,12 +72,14 @@ def calculate_trade_statistics(
     -----------
     trades_df : DataFrame | np.ndarray | pd.Series
         DataFrame con columna de retornos por trade, o directamente un array de
-        retornos (pnl_pct) de los trades cerrados. El array es la ruta rápida
-        usada por el grid search (evita construir el DataFrame de trades).
+        retornos NETOS (pnl_pct). El array es la ruta rápida del grid search.
     returns_col : str
-        Nombre de la columna de retornos (default: 'pnl_pct'). Solo se usa con DataFrame.
+        Nombre de la columna de retornos (default: 'pnl_pct'). Solo con DataFrame.
     initial_capital : float
-        Capital inicial para cálculos de equity y drawdown nominal
+        Capital inicial para cálculos de equity y drawdown nominal.
+    costs_pct, commission_pct, slippage_pct : array, optional
+        Costes efectivos por trade (fracciones). Si se proveen (o están como columnas
+        del DataFrame), se añaden agregados nominales (total_costs_usd, etc.).
 
     Returns:
     --------
@@ -78,7 +90,8 @@ def calculate_trade_statistics(
         returns = np.asarray(trades_df, dtype=float)
         if returns.size == 0:
             return _empty_stats(initial_capital)
-        return _stats_from_returns(returns, initial_capital)
+        return _stats_from_returns(returns, initial_capital,
+                                   costs_pct, commission_pct, slippage_pct)
 
     if trades_df.empty:
         return _empty_stats(initial_capital)
@@ -91,7 +104,7 @@ def calculate_trade_statistics(
             returns_col = 'profit_pct'
         elif 'returns' in trades_df.columns:
             returns_col = 'returns'
-            
+
     if returns_col not in trades_df.columns:
         # Si no se encuentra la columna, retornar vacíos
         return {
@@ -100,7 +113,15 @@ def calculate_trade_statistics(
         }
 
     returns = np.asarray(trades_df[returns_col], dtype=float)
-    return _stats_from_returns(returns, initial_capital)
+    # Si el DataFrame trae columnas de costes, usarlas para los agregados nominales
+    if costs_pct is None:
+        costs_pct = _col_array(trades_df, 'costs_pct')
+    if commission_pct is None:
+        commission_pct = _col_array(trades_df, 'commission_pct')
+    if slippage_pct is None:
+        slippage_pct = _col_array(trades_df, 'slippage_pct')
+    return _stats_from_returns(returns, initial_capital,
+                               costs_pct, commission_pct, slippage_pct)
 
 
 def _empty_stats(initial_capital: float) -> Dict[str, float]:
@@ -125,16 +146,27 @@ def _empty_stats(initial_capital: float) -> Dict[str, float]:
         'final_equity': initial_capital,
         'max_drawdown_usd': 0.0,
         'best_trade': 0.0,
-        'worst_trade': 0.0
+        'worst_trade': 0.0,
+        'total_costs_pct': 0.0,
+        'total_commission_usd': 0.0,
+        'total_slippage_usd': 0.0,
+        'total_costs_usd': 0.0,
     }
 
 
-def _stats_from_returns(returns: np.ndarray, initial_capital: float = 10000.0) -> Dict[str, float]:
+def _stats_from_returns(
+    returns: np.ndarray,
+    initial_capital: float = 10000.0,
+    costs_pct=None,
+    commission_pct=None,
+    slippage_pct=None,
+) -> Dict[str, float]:
     """
-    Calcula las estadísticas a partir de un array numpy de retornos por trade.
+    Calcula las estadísticas a partir de un array numpy de retornos NETOS por trade.
 
     Replica exactamente la semántica de la implementación basada en pandas
-    (incluyendo std con ddof=1) para garantizar números idénticos.
+    (incluyendo std con ddof=1). Si se proveen los costes por trade, añade los
+    agregados nominales usando el notional compuesto (equity antes de cada trade).
     """
     # 1. Métricas Básicas
     wins = returns[returns > 0]
@@ -192,6 +224,23 @@ def _stats_from_returns(returns: np.ndarray, initial_capital: float = 10000.0) -
     kelly = win_rate - (1 - win_rate) / risk_reward if risk_reward > 0 else 0.0
     expectancy = (win_rate * avg_win) - ((1 - win_rate) * abs(avg_loss))
 
+    # 4. Costes efectivos (nominales). Notional por trade = equity ANTES del trade
+    #    (reinversión compuesta): equity_before[0]=capital, equity_before[i]=equity tras i-1.
+    total_costs_pct = float(np.sum(costs_pct)) if costs_pct is not None else 0.0
+    total_commission_usd = 0.0
+    total_slippage_usd = 0.0
+    total_costs_usd = 0.0
+    if commission_pct is not None or slippage_pct is not None or costs_pct is not None:
+        equity_before = np.empty_like(returns)
+        equity_before[0] = initial_capital
+        equity_before[1:] = equity_curve[:-1]
+        if commission_pct is not None:
+            total_commission_usd = float(np.sum(np.asarray(commission_pct, dtype=float) * equity_before))
+        if slippage_pct is not None:
+            total_slippage_usd = float(np.sum(np.asarray(slippage_pct, dtype=float) * equity_before))
+        if costs_pct is not None:
+            total_costs_usd = float(np.sum(np.asarray(costs_pct, dtype=float) * equity_before))
+
     return {
         'total_trades': int(total_trades),
         'winning_trades': int(n_wins),
@@ -214,5 +263,9 @@ def _stats_from_returns(returns: np.ndarray, initial_capital: float = 10000.0) -
         'final_equity': float(final_equity),
         'max_drawdown_usd': float(max_drawdown_usd),
         'best_trade': float(best_trade),
-        'worst_trade': float(worst_trade)
+        'worst_trade': float(worst_trade),
+        'total_costs_pct': float(total_costs_pct),
+        'total_commission_usd': float(total_commission_usd),
+        'total_slippage_usd': float(total_slippage_usd),
+        'total_costs_usd': float(total_costs_usd),
     }
