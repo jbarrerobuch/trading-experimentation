@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
-from pathlib import Path
 from typing import List, Dict, Any, Optional
-from itertools import product, islice
 
 # Intentar importar librerías opcionales
 try:
@@ -23,70 +21,6 @@ from .backtesting import get_strategy_trades
 from .utils.stats import calculate_trade_statistics
 from .utils.helpers import generate_run_name
 
-def batched(iterable, n):
-    """Batch data into lists of length n. The last batch may be shorter."""
-    if n < 1:
-        raise ValueError('n must be at least one')
-    it = iter(iterable)
-    while True:
-        chunk = list(islice(it, n))
-        if not chunk:
-            return
-        yield chunk
-
-def _generate_atomic_configs(strategy_configs):
-    """Yields single-combination configurations from a list of grid configs."""
-    for config in strategy_configs:
-        if config.get('type') == 'combo':
-            indicators = config['indicators']
-            combination_methods = config.get('combination_methods', ['AND'])
-            position_types = config.get('position_types', ['long'])
-            
-            # Prepare param grids for each indicator
-            ind_param_combos = []
-            for ind in indicators:
-                keys = list(ind['params_grid'].keys())
-                values = list(ind['params_grid'].values())
-                combos = [dict(zip(keys, v)) for v in product(*values)]
-                ind_param_combos.append({'indicator': ind['indicator'], 'combos': combos})
-            
-            # Cartesian product of all indicators' combos
-            all_ind_combos = product(*[x['combos'] for x in ind_param_combos])
-            
-            for ind_combo_set in all_ind_combos:
-                # Reconstruct indicators list for this atomic config
-                atomic_indicators = []
-                for i, params in enumerate(ind_combo_set):
-                    atomic_indicators.append({
-                        'indicator': ind_param_combos[i]['indicator'],
-                        'params_grid': {k: [v] for k, v in params.items()}
-                    })
-                
-                for method in combination_methods:
-                    for pos_type in position_types:
-                        yield {
-                            'name': config['name'],
-                            'type': 'combo',
-                            'indicators': atomic_indicators,
-                            'combination_methods': [method],
-                            'position_types': [pos_type]
-                        }
-
-        else:
-            # Single
-            params_grid = config['params_grid']
-            keys = list(params_grid.keys())
-            values = list(params_grid.values())
-            for combo in product(*values):
-                params = dict(zip(keys, combo))
-                atomic_grid = {k: [v] for k, v in params.items()}
-                
-                yield {
-                    'name': config['name'],
-                    'type': 'single',
-                    'indicator': config['indicator'],
-                    'params_grid': atomic_grid
-                }
 
 def walk_forward_optimization(
     df: pd.DataFrame,
@@ -139,7 +73,12 @@ def walk_forward_optimization(
         - 'metrics': Métricas globales del rendimiento OOS.
         - 'history': DataFrame con el registro de qué estrategia ganó en cada paso.
     """
-    
+
+    # batch mode deprecado: el motor refactorizado corre un único grid por ventana
+    # (reutilizando su value_cache). Los parámetros se mantienen por compatibilidad.
+    if batch_size:
+        print("ℹ️  WFA batch mode está deprecado y se ignora; se ejecuta un único grid por ventana.")
+
     # Configurar MLflow si se solicita
     if use_mlflow and MLFLOW_AVAILABLE:
         mlflow.set_experiment(experiment_name) # pyright: ignore[reportPossiblyUnboundVariable]
@@ -220,103 +159,19 @@ def walk_forward_optimization(
             # (aunque el cache usa LRU, es bueno resetear al cambiar de ventana de datos)
             clear_indicator_cache()
             
-            # Ejecutamos grid search en la ventana de entrenamiento
-            # Desactivamos MLflow interno para evitar saturación
-            
-            if batch_size:
-                print(f"   ⚡ Batch Mode: {batch_size} configs per batch")
-                best_rows = []
-                
-                # Directorio de checkpoints para este paso
-                base_ckpt_dir = Path(checkpoint_dir) if checkpoint_dir else Path("temp_checkpoints")
-                ckpt_dir = base_ckpt_dir / f"wfa_{ticker}_{timeframe}" / f"step_{step_count}"
-                if resume_checkpoints:
-                    os.makedirs(ckpt_dir, exist_ok=True)
-                
-                # Generar lista de configs atómicos (consumir generador para saber total)
-                all_atomic_configs = list(_generate_atomic_configs(strategy_configs))
-                total_configs = len(all_atomic_configs)
-                
-                # Crear batches
-                batches = list(batched(all_atomic_configs, batch_size))
-                total_batches = len(batches)
-                
-                print(f"   ⚡ Batch Mode: {batch_size} configs/batch | Total: {total_configs} configs ({total_batches} batches)")
-                
-                # Configurar iterador con barra de progreso si es posible
-                if TQDM_AVAILABLE:
-                    iterator = tqdm(enumerate(batches), total=total_batches, desc="   Processing Batches", unit="batch", leave=False) # pyright: ignore[reportPossiblyUnboundVariable]
-                else:
-                    iterator = enumerate(batches)
+            # Ejecutamos un único grid search en la ventana de entrenamiento.
+            # (El antiguo "batch mode" partía el grid en configs atómicos y rompía la
+            #  reutilización del value_cache del motor; está deprecado, ver firma.)
+            grid_results = strategy_grid_search(
+                df=train_df,
+                strategy_configs=strategy_configs,
+                use_mlflow=False,
+                commission=commission,
+                slippage=slippage,
+                use_next_open=use_next_open,
+                verbose=False,
+            )
 
-                for batch_idx, batch in iterator:
-                    if not TQDM_AVAILABLE:
-                        print(f"      Processing batch {batch_idx+1}/{total_batches}...", end='\r')
-                        
-                    ckpt_file = ckpt_dir / f"batch_{batch_idx}.parquet"
-                    
-                    # Intentar recuperar checkpoint
-                    if resume_checkpoints and ckpt_file.exists():
-                        try:
-                            if not TQDM_AVAILABLE:
-                                print(f"      ♻️  Skipping batch {batch_idx} (checkpoint found)   ")
-                            batch_best = pd.read_parquet(ckpt_file)
-                            if not batch_best.empty:
-                                best_rows.append(batch_best)
-                            continue
-                        except Exception as e:
-                            print(f"      ⚠️  Corrupt checkpoint {batch_idx}: {e}. Re-running.")
-                    
-                    # Ejecutar si no hay checkpoint
-                    batch_results = strategy_grid_search(
-                        df=train_df,
-                        strategy_configs=batch,
-                        use_mlflow=False,
-                        commission=commission,
-                        slippage=slippage,
-                        use_next_open=use_next_open,
-                        log_artifacts=False,
-                        verbose=False
-                    )
-                    
-                    if not batch_results.empty:
-                        # Determinar métrica a usar para filtrar este batch
-                        if metric not in batch_results.columns:
-                             metric_to_use_batch = 'sharpe_ratio'
-                        else:
-                             metric_to_use_batch = metric
-                        
-                        # Guardar solo el mejor de este batch para ahorrar memoria
-                        best_in_batch = batch_results.sort_values(by=metric_to_use_batch, ascending=False).head(1).copy()
-                        
-                        # Guardar checkpoint
-                        if resume_checkpoints:
-                            # Convertir columnas problemáticas (dict/list) a string para Parquet
-                            # Especialmente 'params' que puede ser {} vacío y romper PyArrow
-                            save_df = best_in_batch.copy()
-                            for col in save_df.columns:
-                                if save_df[col].apply(lambda x: isinstance(x, (dict, list))).any():
-                                    save_df[col] = save_df[col].astype(str)
-                            
-                            save_df.to_parquet(ckpt_file)
-                            
-                        best_rows.append(best_in_batch)
-                
-                if best_rows:
-                    grid_results = pd.concat(best_rows)
-                else:
-                    grid_results = pd.DataFrame()
-            else:
-                grid_results = strategy_grid_search(
-                    df=train_df,
-                    strategy_configs=strategy_configs,
-                    use_mlflow=False, 
-                    commission=commission,
-                    slippage=slippage,
-                    use_next_open=use_next_open,
-                    log_artifacts=False
-                )
-            
             if grid_results.empty:
                 print("   ⚠️ No se encontraron estrategias válidas. Saltando paso.")
                 start_idx += step_size
@@ -390,13 +245,15 @@ def walk_forward_optimization(
                             })
                     
                     trades = get_strategy_trades(
-                        test_df_warmup, 
-                        indicator=None, 
-                        params={}, 
+                        test_df_warmup,
+                        indicator=None,
+                        params={},
                         position_type=best_row['position_type'],
                         indicators_combo=indicators_combo,
                         combination_method=best_row['combination_method'],
-                        use_next_open=use_next_open
+                        use_next_open=use_next_open,
+                        commission=commission,
+                        slippage=slippage,
                     )
                     params_log = {'indicators': indicators_combo, 'method': best_row['combination_method']}
                     
@@ -434,7 +291,9 @@ def walk_forward_optimization(
                         indicator=best_row.get('indicator', strat_name.split('_')[0]), # Fallback
                         params=params_dict,
                         position_type=best_row['position_type'],
-                        use_next_open=use_next_open
+                        use_next_open=use_next_open,
+                        commission=commission,
+                        slippage=slippage,
                     )
                     params_log = params_dict
                 

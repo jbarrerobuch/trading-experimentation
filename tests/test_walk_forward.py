@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from trading_strategy.walk_forward import walk_forward_optimization, _generate_atomic_configs
+from trading_strategy.walk_forward import walk_forward_optimization
 
 @pytest.fixture
 def sample_df():
@@ -24,19 +24,6 @@ def sample_df():
 def mock_grid_search():
     with patch('trading_strategy.walk_forward.strategy_grid_search') as mock:
         yield mock
-
-def test_generate_atomic_configs():
-    config = [{
-        'name': 'Test',
-        'type': 'single',
-        'indicator': 'rsi',
-        'params_grid': {'period': [14, 21]}
-    }]
-    
-    atomic = list(_generate_atomic_configs(config))
-    assert len(atomic) == 2
-    assert atomic[0]['params_grid']['period'] == [14]
-    assert atomic[1]['params_grid']['period'] == [21]
 
 def test_walk_forward_optimization_basic(sample_df, mock_grid_search):
     # Mock grid search returning one result
