@@ -5,6 +5,7 @@ Calcula indicadores de momentum, tendencia y volatilidad usando pandas-ta
 
 import numpy as np
 import pandas as pd
+import importlib.metadata  # el fork pandas-ta-openbb lo usa sin importarlo
 import pandas_ta as ta
 from functools import lru_cache
 import hashlib
@@ -546,8 +547,8 @@ def compute_signal(
         period = int(params.get('period', 14))
         vortex = ta.vortex(high_s, low_s, close_s, length=period)
         if vortex is not None:
-            plus_col = next((c for c in vortex.columns if c.startswith('VTXp_')), None)
-            minus_col = next((c for c in vortex.columns if c.startswith('VTXm_')), None)
+            plus_col = next((c for c in vortex.columns if c.upper().startswith('VTXP_')), None)
+            minus_col = next((c for c in vortex.columns if c.upper().startswith('VTXM_')), None)
             if plus_col and minus_col:
                 plus = vortex[plus_col]; minus = vortex[minus_col]
                 _aux('vortex_plus', plus); _aux('vortex_minus', minus)

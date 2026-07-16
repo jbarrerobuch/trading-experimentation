@@ -4,7 +4,6 @@ indicator: stoch_rsi
 
 params_grid:
   rsi_period: [10, 14, 20, 28]
-  stoch_period: [10, 14, 20]
   k_period: [3, 5, 7]
   d_period: [3, 5, 7]
   overbought: [0.75, 0.80, 0.85]

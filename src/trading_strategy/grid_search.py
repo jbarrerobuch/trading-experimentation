@@ -16,6 +16,7 @@ from itertools import product
 import pandas as pd
 
 from .backtesting import backtest_strategy, new_value_cache
+from .validation_metrics import build_validation_context
 from .utils import results_io
 
 
@@ -95,7 +96,8 @@ def _enumerate_tasks(strategy_configs):
     return tasks
 
 
-def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, value_cache):
+def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, value_cache,
+              validation_ctx=None):
     """Ejecuta un experimento y devuelve el dict de resultado (o None)."""
     if task['type'] == 'combo':
         indicators_combo = task['indicators_combo']
@@ -106,7 +108,7 @@ def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, 
             df=df, indicator=None, params={}, position_type=position_type,
             indicators_combo=indicators_combo, combination_method=combination_method,
             commission=commission, slippage=slippage, use_next_open=use_next_open,
-            value_cache=value_cache,
+            value_cache=value_cache, validation_context=validation_ctx,
         )
         if metrics is None:
             return None
@@ -136,7 +138,7 @@ def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, 
     metrics = backtest_strategy(
         df, indicator, params, position_type,
         commission=commission, slippage=slippage, use_next_open=use_next_open,
-        value_cache=value_cache,
+        value_cache=value_cache, validation_context=validation_ctx,
     )
     if metrics is None:
         return None
@@ -153,12 +155,14 @@ def _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, 
     return result
 
 
-def _run_chunk(df, tasks, commission, slippage, use_next_open, ticker, timeframe):
+def _run_chunk(df, tasks, commission, slippage, use_next_open, ticker, timeframe,
+               validation_ctx=None):
     """Ejecuta un lote de tareas con su propio value cache (para paralelo)."""
     value_cache = new_value_cache()
     out = []
     for task in tasks:
-        res = _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe, value_cache)
+        res = _run_task(df, task, commission, slippage, use_next_open, ticker, timeframe,
+                        value_cache, validation_ctx)
         if res is not None:
             out.append(res)
     return out
@@ -171,7 +175,8 @@ def _run_chunk(df, tasks, commission, slippage, use_next_open, ticker, timeframe
 def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT', timeframe='1h',
                          experiment_name='default', commission=0.001, slippage=0.0001, use_next_open=True,
                          session_id=None, log_artifacts=False, verbose=True,
-                         n_jobs=1, output_dir=None):
+                         n_jobs=1, output_dir=None,
+                         validation=True, val_frac=0.3, signal_delay=1):
     """
     Grid Search para optimizar parámetros de estrategias de trading.
 
@@ -199,6 +204,15 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT
     output_dir : str or Path, optional
         Si se indica, escribe la tabla de resultados (Parquet) y el manifest
         (JSON) vía utils.results_io.
+    validation : bool
+        Si True (default), añade a cada run las métricas de validación
+        anti-overfitting (sharpe_train/val, sub-ventanas, régimen, IR vs B&H)
+        vía validation_metrics. El contexto se precomputa una sola vez.
+    val_frac : float
+        Fracción final del dataset reservada como validación (corte cronológico).
+    signal_delay : int
+        Delay de ejecución de las métricas de validación. 1 = estándar sin
+        lookahead; 2 = test de lookahead (re-ejecución del Bloque 5.3).
     use_mlflow, log_artifacts : DEPRECATED
         Ignorados. El logging se hace ahora vía output estructurado (output_dir).
 
@@ -220,6 +234,16 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT
     # Enumerar experimentos
     tasks = _enumerate_tasks(strategy_configs)
     total_experiments = len(tasks)
+
+    # Contexto de validación: todo lo que depende solo del dataset se
+    # precomputa UNA vez (retornos, régimen, máscaras train/val, B&H).
+    validation_ctx = None
+    if validation:
+        validation_ctx = build_validation_context(
+            df, timeframe=timeframe_normalized,
+            commission=commission, slippage=slippage,
+            val_frac=val_frac, signal_delay=signal_delay,
+        )
 
     if verbose:
         print(f"\n🎯 Asset: {ticker_normalized} | Timeframe: {timeframe_normalized}")
@@ -255,7 +279,7 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT
                 print(f"⚡ Paralelo: {len(chunks)} workers")
             results_lists = Parallel(n_jobs=n_workers, prefer="processes")(
                 delayed(_run_chunk)(df, chunk, commission, slippage, use_next_open,
-                                    ticker_normalized, timeframe_normalized)
+                                    ticker_normalized, timeframe_normalized, validation_ctx)
                 for chunk in chunks
             )
             for rl in results_lists:
@@ -271,7 +295,8 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT
         value_cache = new_value_cache()
         for i, task in enumerate(tasks, 1):
             res = _run_task(df, task, commission, slippage, use_next_open,
-                            ticker_normalized, timeframe_normalized, value_cache)
+                            ticker_normalized, timeframe_normalized, value_cache,
+                            validation_ctx)
             if res is not None:
                 all_results.append(res)
 
@@ -318,6 +343,13 @@ def strategy_grid_search(df, strategy_configs, use_mlflow=False, ticker='BTCUSDT
             ticker=ticker_normalized, timeframe=timeframe_normalized, df=df,
             commission=commission, slippage=slippage, use_next_open=use_next_open,
             git_commit=get_git_commit(), n_experiments=len(results_df), elapsed_s=elapsed,
+            extra={
+                'validation': bool(validation),
+                'val_frac': float(val_frac),
+                'signal_delay': int(signal_delay),
+                'periods_per_year': validation_ctx.periods_per_year if validation_ctx else None,
+                'n_experiments_enumerated': int(total_experiments),
+            },
         )
         paths = results_io.write_results(
             results_df, output_dir, experiment_name=experiment_name,

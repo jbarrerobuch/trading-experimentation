@@ -117,7 +117,8 @@ def create_batch_configs(strategy_config, batch_size):
 def batch_grid_search(df, strategy_configs, batch_size=10000,
                      use_mlflow=False, ticker='BTCUSDT', timeframe='1h',
                      experiment_name='default', save_checkpoints=True,
-                     checkpoint_dir=None, output_file=None, n_jobs=1):
+                     checkpoint_dir=None, output_file=None, n_jobs=1,
+                     output_dir=None, validation=True, val_frac=0.3, signal_delay=1):
     """
     Grid Search con división automática en batches
     Optimiza memoria y permite recuperación automática (Auto-Resume)
@@ -144,7 +145,17 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
         Directorio de checkpoints.
     output_file : str or Path, optional
         Ruta del archivo final.
-        
+    output_dir : str or Path, optional
+        Si se indica, cada batch escribe además Parquet + manifest (results_io),
+        el formato que consume examples/export_validation_results.py.
+    validation : bool
+        Si True (default), añade las métricas de validación anti-overfitting
+        por run (ver validation_metrics).
+    val_frac : float
+        Fracción final del dataset reservada como validación.
+    signal_delay : int
+        1 = estándar; 2 = test de lookahead (re-ejecución Bloque 5.3).
+
     Returns:
     --------
     DataFrame consolidado con todos los resultados
@@ -278,9 +289,18 @@ def batch_grid_search(df, strategy_configs, batch_size=10000,
                 ticker=ticker,
                 timeframe=timeframe,
                 experiment_name=experiment_name,
-                session_id=current_session_id,
+                # Con output_dir, cada batch necesita su propio session_id para
+                # no sobreescribir el Parquet del batch anterior (el nombre de
+                # archivo incluye el session_id). El sufijo conserva el orden
+                # lexicográfico=cronológico que usa dedupe_runs.
+                session_id=(current_session_id if output_dir is None
+                            else f"{current_session_id}_b{batch_idx:04d}"),
                 n_jobs=n_jobs,
                 verbose=False,
+                output_dir=output_dir,
+                validation=validation,
+                val_frac=val_frac,
+                signal_delay=signal_delay,
             )
             
             # Agregar metadatos de batch

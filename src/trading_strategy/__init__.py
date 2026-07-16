@@ -12,6 +12,14 @@ from .indicators import (
 )
 from .backtesting import backtest_strategy, get_strategy_trades
 from .grid_search import strategy_grid_search
+from .validation_metrics import (
+    build_validation_context,
+    compute_validation_metrics,
+    backtest_with_validation,
+    compute_stability_table,
+    decision_rule,
+    dedupe_runs,
+)
 from .batch_grid_search import (
     batch_grid_search,
     estimate_batch_requirements
@@ -42,6 +50,14 @@ __all__ = [
     'backtest_strategy',
     'get_strategy_trades',
     
+    # Validation (anti-overfitting)
+    'build_validation_context',
+    'compute_validation_metrics',
+    'backtest_with_validation',
+    'compute_stability_table',
+    'decision_rule',
+    'dedupe_runs',
+
     # Grid Search
     'strategy_grid_search',
     'batch_grid_search',

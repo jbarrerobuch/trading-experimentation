@@ -60,7 +60,7 @@ Las estrategias se definen en archivos YAML dentro de la carpeta `strategies/`. 
 
 ```yaml
 name: "Estrategia_MACD_Ejemplo"
-type: "single"  # o 'combo'
+type: "individual"  # o 'combo'
 indicator:
   name: "macd"
   params:
