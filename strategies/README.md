@@ -5,8 +5,17 @@ Esta carpeta contiene las configuraciones de estrategias en formato YAML para el
 ## 📁 Estructura de Archivos
 
 Cada archivo `.yaml` define una estrategia que puede ser:
-- **Individual**: Un solo indicador con grid de parámetros
-- **Combo**: Múltiples indicadores combinados
+- **Individual** (`type: individual`): Un solo indicador con grid de parámetros
+- **Combo** (`type: combo`): Múltiples indicadores combinados
+
+Organización de carpetas:
+- `individual/` — set canónico de estrategias de un solo indicador (una por indicador soportado).
+- `combo/`, `selection/` — estrategias combinadas.
+- `test/` — configuraciones de prueba.
+
+> **Nota:** el campo `type` solo admite `individual` o `combo`. Cualquier otro
+> valor (p. ej. el antiguo `single`) ejecuta el grid search pero se clasifica
+> mal en `get_strategy_info()`. Usa siempre `individual` para un solo indicador.
 
 ## 📋 Formato de Estrategia Individual
 
@@ -21,22 +30,41 @@ params_grid:
   position_type: [both, long, short]
 ```
 
-### Indicadores Disponibles:
-- `rsi` - Relative Strength Index
-- `macd` - Moving Average Convergence Divergence
-- `willr` - Williams %R
-- `stoch` - Stochastic Oscillator
-- `cci` - Commodity Channel Index
-- `rsx` - Relative Strength Xtra
-- `cmo` - Chande Momentum Oscillator
-- `uo` - Ultimate Oscillator
-- `adx` - Average Directional Index
-- `er` - Efficiency Ratio
-- `slope` - Slope
-- `trix` - Triple Exponential Average
-- `ao` - Awesome Oscillator
-- `inertia` - Inertia
-- `bop` - Balance of Power
+### Indicadores Disponibles (28):
+
+Momentum / osciladores:
+- `rsi` - Relative Strength Index → `period`, `overbought`, `oversold`
+- `rsx` - Relative Strength Xtra → `period`, `overbought`, `oversold`
+- `cci` - Commodity Channel Index → `period`, `threshold`
+- `cmo` - Chande Momentum Oscillator → `period`
+- `willr` - Williams %R → `period`, `high_threshold`, `low_threshold`
+- `stoch` - Stochastic Oscillator → `k`, `d`, `smooth_k`
+- `stoch_rsi` - Stochastic RSI → `rsi_period`, `k_period`, `d_period`, `overbought`, `oversold`
+- `uo` - Ultimate Oscillator → `threshold`
+- `ao` - Awesome Oscillator → `fast`, `slow`
+- `bop` - Balance of Power → (sin parámetros; solo `position_type`)
+- `mfi` - Money Flow Index → `period`, `overbought`, `oversold`
+- `mom` - Momentum → `period`
+- `roc` - Rate of Change → `period`
+- `bbp` - Bollinger Bands %B → `period`, `std_dev`, `lower_threshold`, `upper_threshold`
+- `fisher` - Fisher Transform → `period`, `signal` (cruce si `signal` > 1)
+
+Tendencia:
+- `macd` - Moving Average Convergence Divergence → `fast`, `slow`, `signal`
+- `adx` - Average Directional Index → `period`, `threshold`
+- `aroon` - Aroon Oscillator → `period`
+- `trix` - Triple Exponential Average → `period`, `signal`
+- `slope` - Slope → `period`
+- `er` - Efficiency Ratio → `period`, `threshold`
+- `inertia` - Inertia → `period`, `upper`, `lower`
+- `vortex` - Vortex Indicator → `period`
+- `psar` - Parabolic SAR → `af0`, `af`, `max_af`
+- `supertrend` - Supertrend → `period`, `multiplier`
+
+Volatilidad / canales:
+- `keltner` - Keltner Channels → `period`, `atr_period`, `multiplier`
+- `donchian` - Donchian Channels → `period`
+- `bbands_width` - Bollinger Bands Width/Expansion → `period`, `std_dev`
 
 ## 📋 Formato de Estrategia Combo
 

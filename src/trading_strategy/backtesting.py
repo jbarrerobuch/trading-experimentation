@@ -15,6 +15,7 @@ from .constants import (
     COL_SIGNAL, COL_OPEN, COL_CLOSE, COL_HIGH, COL_LOW, COL_VOLUME
 )
 from .utils.stats import calculate_trade_statistics
+from .validation_metrics import compute_validation_metrics, ValidationContext
 
 
 # ============================================================================
@@ -207,6 +208,7 @@ def backtest_strategy(
     slippage: float = 0.0001,    # fracción del precio, adversa en ambos lados
     use_next_open: bool = True,
     value_cache: Optional["OrderedDict"] = None,
+    validation_context: Optional[ValidationContext] = None,
 ) -> Optional[Dict[str, float]]:
     """
     Backtest de estrategia de trading con cálculo de métricas.
@@ -219,6 +221,11 @@ def backtest_strategy(
 
     ``value_cache`` (opcional) reutiliza el resultado del indicador (pandas-ta)
     entre los distintos thresholds y ``position_type`` del mismo grid search.
+
+    ``validation_context`` (opcional) añade las métricas de validación
+    anti-overfitting (sharpe_train/val, sub-ventanas, régimen, IR vs B&H)
+    calculadas con la MISMA señal — ver validation_metrics.build_validation_context.
+    Son métricas por-período (close-to-close), complementarias de las por-trade.
 
     Returns
     -------
@@ -247,6 +254,11 @@ def backtest_strategy(
         'params': params if params else {},
         'n_transactions': metrics['total_trades'] * 2  # Estimado
     })
+
+    if validation_context is not None:
+        pos = _target_position(signal, position_type)
+        metrics.update(compute_validation_metrics(pos, validation_context))
+
     return metrics
 
 
